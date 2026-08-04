@@ -1,0 +1,45 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+header:
+  license:
+    spdx-id: Apache-2.0
+    copyright-owner: NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+
+    content: |
+      # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+      # SPDX-License-Identifier: Apache-2.0
+
+    # Pattern is matched against lowercased text where "(c)" is normalized
+    # to the word "copyright", so "Copyright (c)" becomes "copyright copyright".
+    pattern: |
+      spdx-filecopyrighttext: copyright copyright \d{4} nvidia corporation & affiliates\. all rights reserved\.
+      spdx-license-identifier: apache-2\.0
+
+  paths:
+    - "**/*.py"
+    - "**/*.sh"
+    - "**/*.md"
+    - "**/*.rst"
+    - "**/*.yml"
+    - "**/*.yaml"
+    - "**/*.toml"
+    - "ovnewton/examples/assets/scene_rigid_bodies.usda"
+    - "ovnewton/examples/assets/scene_cartpole.usda"
+    - ".github/CODEOWNERS"
+    - ".gitattributes"
+    - ".gitignore"
+
+  # Canonical license text and generated tool files are not source-header
+  # candidates.
+  paths-ignore:
+    - "LICENSE.md"
+    - "uv.lock"
+    - ".python-version"
+
+  # Allow room for one copyright notice before NVIDIA. The 120-character
+  # limit matches Ruff's project line limit. If an asset needs several earlier
+  # notices, update the CI license check for that asset.
+  license-location-threshold: 120
+
+  comment: on-failure

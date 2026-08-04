@@ -1,0 +1,40 @@
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
+
+# ovnewton
+
+`ovnewton` connects the [Newton](https://github.com/newton-physics/newton) physics engine to the [`ovstage`](https://nvidia-omniverse.github.io/ovstage/) scene store.
+
+This site describes `ovnewton` {{ ovnewton_version }} from commit {{ ovnewton_commit }}.
+
+:::{warning}
+`ovnewton` is pre-release software. Its API and packaging may change before 1.0.
+:::
+
+`ovnewton` is a small, pure-Python library. It builds a `newton.Model` from a populated stage. Newton does not parse the USD file.
+
+```text
+USD file ──ovpopulation──▶ ovstage ──ovnewton──▶ newton.Model
+                              ▲                      │
+                              └──── simulation state ┘
+```
+
+The application owns the Newton solver, state, and stepping loop. It can publish Newton state to ovstage, read sealed stage changes back into Newton, or expose selected Newton state directly. Downstream consumers such as ovrtx can read the published state from the same stage.
+
+```{toctree}
+:hidden:
+
+Home <self>
+```
+
+```{toctree}
+:maxdepth: 2
+
+getting-started
+concepts
+output-reads
+support
+api
+```

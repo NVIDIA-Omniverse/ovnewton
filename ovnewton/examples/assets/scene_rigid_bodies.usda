@@ -1,0 +1,209 @@
+#usda 1.0
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+(
+    defaultPrim = "World"
+    metersPerUnit = 1.0
+    upAxis = "Z"
+)
+
+# Scene for example_ovnewton_basic: one Plane ground collider plus four
+# side-by-side stacks of three rigid bodies — a stack each of Cube, Sphere,
+# Capsule, and Cylinder gprims. ovnewton.attach_ovstage queries each prim's
+# type from ovstage and builds the matching Newton collision shape (the Plane
+# becomes a ground plane); ovrtx renders the same scene. Each stack's bodies
+# are laterally offset and dropped from a height so they topple into loose
+# piles rather than settling into perfect columns.
+
+def Xform "World"
+{
+    def PhysicsScene "PhysicsScene"
+    {
+        vector3f physics:gravityDirection = (0, 0, -1)
+        float physics:gravityMagnitude = 9.81
+    }
+
+    def Plane "GroundPlane" (prepend apiSchemas = ["PhysicsCollisionAPI"])
+    {
+        uniform token axis = "Z"
+        double width = 30
+        double length = 30
+        bool doubleSided = 1
+        color3f[] primvars:displayColor = [(0.4, 0.4, 0.45)]
+    }
+
+    # ── Cube stack (x = -4.5) ────────────────────────────────────────
+    def Cube "Cube_0" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI"])
+    {
+        double size = 1.0
+        double3 xformOp:translate = (-4.5, 0, 0.8)
+        token[] xformOpOrder = ["xformOp:translate"]
+        float3[] extent = [(-0.5, -0.5, -0.5), (0.5, 0.5, 0.5)]
+        float physics:mass = 1.0
+        color3f[] primvars:displayColor = [(0.9, 0.35, 0.25)]
+    }
+    def Cube "Cube_1" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI"])
+    {
+        double size = 1.0
+        double3 xformOp:translate = (-4.2, 0.12, 2.1)
+        token[] xformOpOrder = ["xformOp:translate"]
+        float3[] extent = [(-0.5, -0.5, -0.5), (0.5, 0.5, 0.5)]
+        float physics:mass = 1.0
+        color3f[] primvars:displayColor = [(0.9, 0.45, 0.3)]
+    }
+    def Cube "Cube_2" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI"])
+    {
+        double size = 1.0
+        double3 xformOp:translate = (-4.75, -0.28, 3.4)
+        token[] xformOpOrder = ["xformOp:translate"]
+        float3[] extent = [(-0.5, -0.5, -0.5), (0.5, 0.5, 0.5)]
+        float physics:mass = 1.0
+        color3f[] primvars:displayColor = [(0.95, 0.55, 0.35)]
+    }
+
+    # ── Sphere stack (x = -1.5) ──────────────────────────────────────
+    def Sphere "Sphere_0" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI"])
+    {
+        double radius = 0.5
+        double3 xformOp:translate = (-1.5, 0, 0.8)
+        token[] xformOpOrder = ["xformOp:translate"]
+        float3[] extent = [(-0.5, -0.5, -0.5), (0.5, 0.5, 0.5)]
+        float physics:mass = 1.0
+        color3f[] primvars:displayColor = [(0.2, 0.5, 0.95)]
+    }
+    def Sphere "Sphere_1" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI"])
+    {
+        double radius = 0.5
+        double3 xformOp:translate = (-1.2, 0.12, 2.1)
+        token[] xformOpOrder = ["xformOp:translate"]
+        float3[] extent = [(-0.5, -0.5, -0.5), (0.5, 0.5, 0.5)]
+        float physics:mass = 1.0
+        color3f[] primvars:displayColor = [(0.3, 0.6, 1.0)]
+    }
+    def Sphere "Sphere_2" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI"])
+    {
+        double radius = 0.5
+        double3 xformOp:translate = (-1.75, -0.28, 3.4)
+        token[] xformOpOrder = ["xformOp:translate"]
+        float3[] extent = [(-0.5, -0.5, -0.5), (0.5, 0.5, 0.5)]
+        float physics:mass = 1.0
+        color3f[] primvars:displayColor = [(0.45, 0.7, 1.0)]
+    }
+
+    # ── Capsule stack (x = 1.5), Z axis ──────────────────────────────
+    def Capsule "Capsule_0" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI"])
+    {
+        uniform token axis = "Z"
+        double radius = 0.3
+        double height = 0.4
+        double3 xformOp:translate = (1.5, 0, 0.8)
+        token[] xformOpOrder = ["xformOp:translate"]
+        float3[] extent = [(-0.3, -0.3, -0.5), (0.3, 0.3, 0.5)]
+        float physics:mass = 1.0
+        color3f[] primvars:displayColor = [(0.3, 0.8, 0.4)]
+    }
+    def Capsule "Capsule_1" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI"])
+    {
+        uniform token axis = "Z"
+        double radius = 0.3
+        double height = 0.4
+        double3 xformOp:translate = (1.8, 0.12, 2.1)
+        token[] xformOpOrder = ["xformOp:translate"]
+        float3[] extent = [(-0.3, -0.3, -0.5), (0.3, 0.3, 0.5)]
+        float physics:mass = 1.0
+        color3f[] primvars:displayColor = [(0.4, 0.85, 0.5)]
+    }
+    def Capsule "Capsule_2" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI"])
+    {
+        uniform token axis = "Z"
+        double radius = 0.3
+        double height = 0.4
+        double3 xformOp:translate = (1.25, -0.28, 3.4)
+        token[] xformOpOrder = ["xformOp:translate"]
+        float3[] extent = [(-0.3, -0.3, -0.5), (0.3, 0.3, 0.5)]
+        float physics:mass = 1.0
+        color3f[] primvars:displayColor = [(0.55, 0.9, 0.6)]
+    }
+
+    # ── Cylinder stack (x = 4.5), Z axis ─────────────────────────────
+    def Cylinder "Cylinder_0" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI"])
+    {
+        uniform token axis = "Z"
+        double radius = 0.4
+        double height = 1.0
+        double3 xformOp:translate = (4.5, 0, 0.8)
+        token[] xformOpOrder = ["xformOp:translate"]
+        float3[] extent = [(-0.4, -0.4, -0.5), (0.4, 0.4, 0.5)]
+        float physics:mass = 1.0
+        color3f[] primvars:displayColor = [(0.95, 0.8, 0.3)]
+    }
+    def Cylinder "Cylinder_1" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI"])
+    {
+        uniform token axis = "Z"
+        double radius = 0.4
+        double height = 1.0
+        double3 xformOp:translate = (4.8, 0.12, 2.1)
+        token[] xformOpOrder = ["xformOp:translate"]
+        float3[] extent = [(-0.4, -0.4, -0.5), (0.4, 0.4, 0.5)]
+        float physics:mass = 1.0
+        color3f[] primvars:displayColor = [(0.95, 0.85, 0.45)]
+    }
+    def Cylinder "Cylinder_2" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI"])
+    {
+        uniform token axis = "Z"
+        double radius = 0.4
+        double height = 1.0
+        double3 xformOp:translate = (4.25, -0.28, 3.4)
+        token[] xformOpOrder = ["xformOp:translate"]
+        float3[] extent = [(-0.4, -0.4, -0.5), (0.4, 0.4, 0.5)]
+        float physics:mass = 1.0
+        color3f[] primvars:displayColor = [(0.98, 0.9, 0.6)]
+    }
+
+    def DomeLight "DomeLight"
+    {
+        float inputs:exposure = 0
+        float inputs:intensity = 100
+        token inputs:texture:format = "latlong"
+    }
+
+    def DistantLight "Sun"
+    {
+        float inputs:intensity = 600
+        float inputs:angle = 0.53
+        quatd xformOp:orient = (0.92388, 0.38268, 0, 0)
+        token[] xformOpOrder = ["xformOp:orient"]
+    }
+
+    def Camera "Camera" (
+        prepend apiSchemas = ["OmniRtxCameraAutoExposureAPI_1", "OmniRtxCameraExposureAPI_1"]
+    )
+    {
+        float2 clippingRange = (1, 10000000)
+        float exposure = 0
+        float focalLength = 0.4
+        float focusDistance = 18.0
+        float horizontalAperture = 0.36
+        token projection = "perspective"
+        float verticalAperture = 0.2025
+        double3 xformOp:translate = (0, -18, 6)
+        float3 xformOp:rotateXYZ = (76, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ"]
+    }
+}
+
+def "Render"
+{
+    def RenderProduct "Camera"
+    {
+        rel camera = </World/Camera>
+        rel orderedVars = </Render/Camera/LdrColor>
+        int2 resolution = (1280, 720)
+
+        def RenderVar "LdrColor"
+        {
+            string sourceName = "LdrColor"
+        }
+    }
+}

@@ -1,0 +1,180 @@
+Metadata-Version: 2.4
+Name: ovnewton
+Version: 0.1.1
+Summary: Connect the Newton physics engine to ovstage / the Omniverse library ecosystem.
+Project-URL: Repository, https://github.com/NVIDIA-Omniverse/ovnewton
+Project-URL: Documentation, https://nvidia-omniverse.github.io/ovnewton/
+Project-URL: Issues, https://github.com/NVIDIA-Omniverse/ovnewton/issues
+Author: NVIDIA CORPORATION & AFFILIATES
+License-Expression: Apache-2.0
+License-File: LICENSE.md
+License-File: THIRD_PARTY_NOTICES.md
+Requires-Python: >=3.10
+Requires-Dist: coacd>=1.0.7; python_full_version < '3.14'
+Requires-Dist: fast-simplification>=0.1.11
+Requires-Dist: newton>=1.4
+Requires-Dist: numpy>=1.26.0
+Requires-Dist: ovstage>=0.1.0.346039
+Requires-Dist: scipy>=1.11.2
+Requires-Dist: warp-lang>=1.15
+Provides-Extra: assets-audit
+Requires-Dist: gitpython>=3.1.52; extra == 'assets-audit'
+Provides-Extra: dev
+Requires-Dist: newton[importers]>=1.4; extra == 'dev'
+Requires-Dist: pytest>=8; extra == 'dev'
+Requires-Dist: ruff>=0.15; extra == 'dev'
+Provides-Extra: examples
+Requires-Dist: ovrtx>=0.4.0; extra == 'examples'
+Requires-Dist: pillow>=12.3.0; extra == 'examples'
+Requires-Dist: pyglet>=2.1; extra == 'examples'
+Description-Content-Type: text/markdown
+
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
+
+# ovnewton
+
+`ovnewton` connects the
+[Newton](https://github.com/newton-physics/newton) physics engine with the
+Omniverse library ecosystem.
+
+> **Experimental:** `ovnewton` is currently experimental. Its API and
+> packaging may change before version 1.0.
+
+## Overview
+
+`ovnewton` builds a Newton model from a USD scene populated into ovstage. The
+application owns the Newton solver and simulation loop. It can publish
+simulation state back to the stage, apply sealed stage updates to Newton state
+and control, or read selected Newton-native state without publishing.
+
+```text
+USD ──ovpopulation──▶ ovstage ──ovnewton──▶ Newton
+                          ▲                    │
+                          └── simulation state ┘
+```
+
+Newton does not parse the USD file in this workflow.
+
+## Requirements
+
+- Python 3.10 or newer
+- Linux on x86-64
+- ovstage 0.1.0.346039 or newer
+- NumPy 1.26.0 or newer
+- SciPy 1.11.2 or newer
+- An NVIDIA GPU with CUDA is recommended; supported non-rendering workflows can
+  also run on the CPU
+
+## Installation
+
+After a public release is published, install `ovnewton` and its runtime
+dependencies from PyPI:
+
+```bash
+pip install ovnewton
+```
+
+Run the installed example without rendering:
+
+```bash
+python -m ovnewton.examples.example_ovnewton_basic --device cpu --no-render
+```
+
+The example loads the `scene_rigid_bodies.usda` scene included in the ovnewton wheel. Install the `examples` extra to render it with ovrtx:
+
+```bash
+pip install "ovnewton[examples]"
+python -m ovnewton.examples.example_ovnewton_basic
+```
+
+The simulation runs on `cuda:0` by default. Pass `--device cpu` to simulate on the CPU. The wheel also includes a complete cartpole scene:
+
+```bash
+python -m ovnewton.examples.example_ovnewton_basic --stage scene_cartpole
+```
+
+## Quickstart
+
+The USD scene in this example is supplied by the application.
+
+```python
+import newton
+import ovnewton
+import ovstage
+from ovstage import PopulationDomain, population
+
+scene_path = "/path/to/scene.usd"
+
+stage = ovstage.Stage()
+population.open_usd(
+    stage,
+    scene_path,
+    ordinal=1,
+    domains=PopulationDomain.ALL,
+)
+stage.advance_write_floor(1).wait()
+
+binding = ovnewton.attach_ovstage(stage)
+model = binding.model
+solver = newton.solvers.SolverXPBD(model)
+state_0 = model.state()
+state_1 = model.state()
+control = model.control()
+contacts = model.contacts()
+
+dt = 1.0 / 60.0
+state_0.clear_forces()
+model.collide(state_0, contacts)
+solver.step(state_0, state_1, control, contacts, dt)
+
+binding.update_to_ovstage(state_1, ordinal=2)
+stage.advance_write_floor(2).wait()
+```
+
+Call `binding.update_from_ovstage(state, control)` before a simulation step to
+apply supported state and drive-target changes from the stage. Use
+`binding.query()` and `binding.read()` to expose selected read-only Newton state
+without publishing it.
+
+## Supported features
+
+`ovnewton` supports:
+
+- rigid bodies and articulations;
+- sphere, cube, capsule, cylinder, cone, and mesh colliders;
+- mass, inertia, center of mass, physics materials, and collision filtering;
+- revolute, prismatic, fixed, spherical, distance, and D6 joints;
+- initial body and joint state;
+- body state and single-axis joint state updates; and
+- selected read-only Newton output on CPU and CUDA.
+
+Malformed data and unsupported physics that would materially change the model
+raise an error during attachment instead of creating an incorrect model.
+
+## Known limitations
+
+- Native USD physics instances and physics `PointInstancer` content are
+  rejected.
+- Per-axis runtime state for D6 joints is not synchronized.
+- Inherited and collection-based material bindings have partial support.
+- Newton actuators, soft bodies, cables, cloth, and volumes are not available
+  because ovstage does not expose the required data.
+- Some recoverable inputs are ignored or normalized with a warning.
+
+ARM64 support is currently limited because Newton's `add_usd()` parity reference
+importer fails with OpenUSD 25.x.
+Attached OVRTX 0.4 rendering still requires a CPU relay for CUDA-origin transform
+updates.
+
+## License
+
+`ovnewton` is licensed under the
+[Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0). The complete
+license text is included in the distribution.
+
+## Contributing
+
+This project is currently not accepting contributions.
