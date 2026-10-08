@@ -1,0 +1,759 @@
+
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="./" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Read simulation output &#8212; ovnewton</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="_static/styles/theme.css?digest=90905a2f556bf617f1a9" rel="stylesheet" />
+<link href="_static/styles/pydata-sphinx-theme.css?digest=90905a2f556bf617f1a9" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="_static/styles/nvidia-sphinx-theme.css?v=933278ad" />
+    <link rel="stylesheet" type="text/css" href="_static/copybutton.css?v=76b2166b" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="_static/scripts/fontawesome.js?digest=90905a2f556bf617f1a9"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="_static/scripts/bootstrap.js?digest=90905a2f556bf617f1a9" />
+<link rel="preload" as="script" href="_static/scripts/pydata-sphinx-theme.js?digest=90905a2f556bf617f1a9" />
+
+
+
+    <script src="_static/documentation_options.js?v=938c9ccc"></script>
+    <script src="_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="_static/copybutton.js?v=f281be69"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'output-reads';</script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+
+    <link rel="icon" href="_static/favicon.png"/>
+
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Support" href="support.html" />
+    <link rel="prev" title="Concepts" href="concepts.html" />
+
+
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="0.2.0" />
+  
+    
+    <script src="_static/searchtools.js"></script>
+    <script src="_static/language_data.js"></script>
+    <script src="searchindex.js"></script>
+  
+
+
+  </head>
+
+  <body data-default-mode="">
+
+
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="ovnewton - Home"/>
+    <img src="_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="ovnewton - Home"/>
+  
+  
+    <p class="title logo__title">ovnewton</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/NVIDIA-Omniverse/ovnewton" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://pypi.org/project/ovnewton/" title="PyPI" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-python fa-lg" aria-hidden="true"></i><span class="visually-hidden">PyPI</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+    <button class="pst-navbar-icon sidebar-toggle secondary-toggle" aria-label="On this page">
+      <span class="fa-solid fa-outdent"></span>
+    </button>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="ovnewton - Home"/>
+    <img src="_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="ovnewton - Home"/>
+  
+  
+    <p class="title logo__title">ovnewton</p>
+  
+</a>
+
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/NVIDIA-Omniverse/ovnewton" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://pypi.org/project/ovnewton/" title="PyPI" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-python fa-lg" aria-hidden="true"></i><span class="visually-hidden">PyPI</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+
+
+
+<nav class="bd-docs-nav bd-links"
+     aria-label="Table of Contents">
+  <p class="bd-links__title" role="heading" aria-level="1">Table of Contents</p>
+  <div class="bd-toc-item navbar-nav"><ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="index.html">Home</a></li>
+</ul>
+<ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="getting-started.html">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="concepts.html">Concepts</a></li>
+<li class="toctree-l1 current active"><a class="current reference internal" href="#">Read simulation output</a></li>
+<li class="toctree-l1"><a class="reference internal" href="support.html">Support</a></li>
+<li class="toctree-l1"><a class="reference internal" href="api.html">API reference</a></li>
+</ul>
+</div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+  </div>
+
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">Read simulation output</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <!--
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
+<section id="read-simulation-output">
+<h1>Read simulation output<a class="headerlink" href="#read-simulation-output" title="Link to this heading">#</a></h1>
+<p>Use <code class="docutils literal notranslate"><span class="pre">StageBinding.read()</span></code> when an application needs Newton data without writing it to ovstage.</p>
+<p>Prepare a selection once, then reuse it. In the example, <code class="docutils literal notranslate"><span class="pre">stage</span></code> is the attached ovstage stage, <code class="docutils literal notranslate"><span class="pre">binding</span></code> is its stage binding, and <code class="docutils literal notranslate"><span class="pre">state</span></code> is the current Newton state from the simulation loop. Replace the path with a body path from your stage.</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">ovstage</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">warp</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">wp</span>
+
+<span class="n">query</span> <span class="o">=</span> <span class="n">binding</span><span class="o">.</span><span class="n">query</span><span class="p">(</span><span class="n">paths</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;/World/Robot/base&quot;</span><span class="p">])</span>
+<span class="n">result</span> <span class="o">=</span> <span class="n">binding</span><span class="o">.</span><span class="n">read</span><span class="p">(</span>
+    <span class="n">state</span><span class="p">,</span>
+    <span class="n">query</span><span class="o">=</span><span class="n">query</span><span class="p">,</span>
+    <span class="n">attributes</span><span class="o">=</span><span class="p">(</span><span class="s2">&quot;body_q&quot;</span><span class="p">,</span> <span class="s2">&quot;body_qd&quot;</span><span class="p">,</span> <span class="s2">&quot;mass&quot;</span><span class="p">),</span>
+<span class="p">)</span>
+
+<span class="k">with</span> <span class="n">ovstage</span><span class="o">.</span><span class="n">PathDictionary</span><span class="p">(</span><span class="n">stage</span><span class="p">)</span> <span class="k">as</span> <span class="n">path_dictionary</span><span class="p">:</span>
+    <span class="k">for</span> <span class="n">group</span> <span class="ow">in</span> <span class="n">result</span><span class="o">.</span><span class="n">groups</span><span class="p">:</span>
+        <span class="n">attribute</span> <span class="o">=</span> <span class="n">path_dictionary</span><span class="o">.</span><span class="n">token_to_string</span><span class="p">(</span><span class="n">group</span><span class="o">.</span><span class="n">attribute</span><span class="p">)</span>
+        <span class="n">prim_paths</span> <span class="o">=</span> <span class="n">path_dictionary</span><span class="o">.</span><span class="n">get_path_strings</span><span class="p">(</span><span class="n">group</span><span class="o">.</span><span class="n">prim_list</span><span class="p">)</span>
+        <span class="n">tensors</span> <span class="o">=</span> <span class="p">[</span>
+            <span class="n">wp</span><span class="o">.</span><span class="n">from_dlpack</span><span class="p">(</span><span class="n">group</span><span class="o">.</span><span class="n">dlpack</span><span class="p">(</span><span class="n">i</span><span class="p">))</span>
+            <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">group</span><span class="o">.</span><span class="n">tensor_count</span><span class="p">)</span>
+        <span class="p">]</span>
+        <span class="n">data_rows</span> <span class="o">=</span> <span class="p">[</span>
+            <span class="n">group</span><span class="o">.</span><span class="n">data_row_index</span><span class="p">(</span><span class="n">i</span><span class="p">)</span>
+            <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">group</span><span class="o">.</span><span class="n">prim_count</span><span class="p">)</span>
+        <span class="p">]</span>
+</pre></div>
+</div>
+<section id="select-an-object-type">
+<h2>Select an object type<a class="headerlink" href="#select-an-object-type" title="Link to this heading">#</a></h2>
+<p>Pass <code class="docutils literal notranslate"><span class="pre">object_type</span></code> without a path query to select every bound object of one type:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">ovnewton</span>
+
+<span class="n">query</span> <span class="o">=</span> <span class="n">binding</span><span class="o">.</span><span class="n">query</span><span class="p">(</span>
+    <span class="n">object_type</span><span class="o">=</span><span class="n">ovnewton</span><span class="o">.</span><span class="n">SimObjectType</span><span class="o">.</span><span class="n">RIGID_BODY</span><span class="p">,</span>
+    <span class="n">scope</span><span class="o">=</span><span class="n">ovnewton</span><span class="o">.</span><span class="n">ObjectScope</span><span class="o">.</span><span class="n">ALL</span><span class="p">,</span>
+<span class="p">)</span>
+</pre></div>
+</div>
+<p>The supported types are <code class="docutils literal notranslate"><span class="pre">RIGID_BODY</span></code>, <code class="docutils literal notranslate"><span class="pre">ARTICULATION_LINK</span></code>, <code class="docutils literal notranslate"><span class="pre">ARTICULATION_JOINT</span></code>, <code class="docutils literal notranslate"><span class="pre">ARTICULATION</span></code>, and <code class="docutils literal notranslate"><span class="pre">PHYSICS_SCENE</span></code>. The first four names and numeric values match the ovphysx output-read API. <code class="docutils literal notranslate"><span class="pre">PHYSICS_SCENE</span></code> is an ovnewton extension for reading effective gravity.</p>
+<p><code class="docutils literal notranslate"><span class="pre">RIGID_BODY</span></code> selects bodies outside an articulation. <code class="docutils literal notranslate"><span class="pre">ARTICULATION_LINK</span></code> selects bodies in an articulation. <code class="docutils literal notranslate"><span class="pre">ARTICULATION_JOINT</span></code> selects authored articulation joints with readable coordinates or velocities; it excludes generated free joints. <code class="docutils literal notranslate"><span class="pre">ARTICULATION</span></code> selects prims with <code class="docutils literal notranslate"><span class="pre">PhysicsArticulationRootAPI</span></code>. <code class="docutils literal notranslate"><span class="pre">PHYSICS_SCENE</span></code> selects the effective physics scene.</p>
+<p>A type can also narrow <code class="docutils literal notranslate"><span class="pre">paths</span></code> or an ovstage query. An explicit path with the wrong type is an error. An ovstage query may match other prims; those prims are ignored.</p>
+<p>Each group from a typed query reports that type through <code class="docutils literal notranslate"><span class="pre">group.object_type</span></code>, as ovphysx does. A query without <code class="docutils literal notranslate"><span class="pre">object_type</span></code> may combine several types, so its groups report <code class="docutils literal notranslate"><span class="pre">None</span></code>.</p>
+<p>Only <code class="docutils literal notranslate"><span class="pre">ObjectScope.ALL</span></code> is supported. It is a reusable topology snapshot that remains valid until the binding’s structure changes. <code class="docutils literal notranslate"><span class="pre">ObjectScope.ACTIVE</span></code> raises <code class="docutils literal notranslate"><span class="pre">NotImplementedError</span></code>. Ovnewton does not yet expose changed-since selection.</p>
+</section>
+<section id="native-output-contract">
+<h2>Native output contract<a class="headerlink" href="#native-output-contract" title="Link to this heading">#</a></h2>
+<p>Native fields return values as Newton stores them, with the same units, frames, component order, and meaning. The shared <code class="docutils literal notranslate"><span class="pre">jointPosition</span></code> and <code class="docutils literal notranslate"><span class="pre">jointVelocity</span></code> fields convert angular axes to degrees and degrees per second. See Newton’s <a class="reference external" href="https://newton-physics.github.io/newton/1.6.0/api/_generated/newton.State.html">State API</a>, <a class="reference external" href="https://newton-physics.github.io/newton/1.6.0/concepts/conventions.html">conventions</a>, and <a class="reference external" href="https://newton-physics.github.io/newton/1.6.0/concepts/articulations.html">articulation model</a> for details.</p>
+<div class="pst-scrollable-table-container"><table class="table">
+<thead>
+<tr class="row-odd"><th class="head"><p>Attribute</p></th>
+<th class="head"><p>Object</p></th>
+<th class="head"><p>Ovnewton group layout</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">body_q</span></code></p></td>
+<td><p>Rigid body or articulation link</p></td>
+<td><p>one <code class="docutils literal notranslate"><span class="pre">float32x7</span></code> value per body</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">body_qd</span></code></p></td>
+<td><p>Rigid body or articulation link</p></td>
+<td><p>one <code class="docutils literal notranslate"><span class="pre">float32x6</span></code> value per body</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">position</span></code></p></td>
+<td><p>Rigid body or articulation link</p></td>
+<td><p>one world-space <code class="docutils literal notranslate"><span class="pre">float32x3</span></code> value per body</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">orientation</span></code></p></td>
+<td><p>Rigid body or articulation link</p></td>
+<td><p>one world-space XYZW <code class="docutils literal notranslate"><span class="pre">float32x4</span></code> value per body</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">linearVelocity</span></code></p></td>
+<td><p>Rigid body or articulation link</p></td>
+<td><p>one world-space <code class="docutils literal notranslate"><span class="pre">float32x3</span></code> value per body</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">angularVelocity</span></code></p></td>
+<td><p>Rigid body or articulation link</p></td>
+<td><p>one world-space <code class="docutils literal notranslate"><span class="pre">float32x3</span></code> value per body</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">linearAcceleration</span></code></p></td>
+<td><p>Rigid body or articulation link</p></td>
+<td><p>one world-space <code class="docutils literal notranslate"><span class="pre">float32x3</span></code> value per body, when <code class="docutils literal notranslate"><span class="pre">State.body_qdd</span></code> is allocated</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">angularAcceleration</span></code></p></td>
+<td><p>Rigid body or articulation link</p></td>
+<td><p>one world-space <code class="docutils literal notranslate"><span class="pre">float32x3</span></code> value per body, when <code class="docutils literal notranslate"><span class="pre">State.body_qdd</span></code> is allocated</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">gravity</span></code></p></td>
+<td><p>Effective physics scene</p></td>
+<td><p>one stage-space <code class="docutils literal notranslate"><span class="pre">float32x3</span></code> value</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">mass</span></code></p></td>
+<td><p>Rigid body or articulation link</p></td>
+<td><p>one <code class="docutils literal notranslate"><span class="pre">float32</span></code> value per body</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">inertia</span></code></p></td>
+<td><p>Rigid body or articulation link</p></td>
+<td><p>one row-major <code class="docutils literal notranslate"><span class="pre">float32x9</span></code> inertia matrix per body</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">centerOfMassPosition</span></code></p></td>
+<td><p>Rigid body or articulation link</p></td>
+<td><p>one local-frame <code class="docutils literal notranslate"><span class="pre">float32x3</span></code> value per body</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">shapeCount</span></code></p></td>
+<td><p>Rigid body or articulation link</p></td>
+<td><p>one <code class="docutils literal notranslate"><span class="pre">int32</span></code> value per body</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">friction</span></code></p></td>
+<td><p>Rigid body or articulation link</p></td>
+<td><p>one padded <code class="docutils literal notranslate"><span class="pre">float32xN</span></code> row per body</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">restitution</span></code></p></td>
+<td><p>Rigid body or articulation link</p></td>
+<td><p>one padded <code class="docutils literal notranslate"><span class="pre">float32xN</span></code> row per body</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">rootPosition</span></code></p></td>
+<td><p>Articulation root</p></td>
+<td><p>one world-space <code class="docutils literal notranslate"><span class="pre">float32x3</span></code> value per articulation</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">rootOrientation</span></code></p></td>
+<td><p>Articulation root</p></td>
+<td><p>one world-space XYZW <code class="docutils literal notranslate"><span class="pre">float32x4</span></code> value per articulation</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">rootLinearVelocity</span></code></p></td>
+<td><p>Articulation root</p></td>
+<td><p>one world-space <code class="docutils literal notranslate"><span class="pre">float32x3</span></code> value per articulation</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">rootAngularVelocity</span></code></p></td>
+<td><p>Articulation root</p></td>
+<td><p>one world-space <code class="docutils literal notranslate"><span class="pre">float32x3</span></code> value per articulation</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">jointPosition</span></code></p></td>
+<td><p>Articulation joint</p></td>
+<td><p>one or more per-axis groups; angular axes use degrees</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">jointVelocity</span></code></p></td>
+<td><p>Articulation joint</p></td>
+<td><p>one or more per-axis groups; angular axes use degrees per second</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">jointPositionTarget</span></code></p></td>
+<td><p>Articulation joint</p></td>
+<td><p>current position targets from <code class="docutils literal notranslate"><span class="pre">Control</span></code>; angular axes use degrees</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">jointVelocityTarget</span></code></p></td>
+<td><p>Articulation joint</p></td>
+<td><p>current velocity targets from <code class="docutils literal notranslate"><span class="pre">Control</span></code>; angular axes use degrees per second</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">jointStiffness</span></code></p></td>
+<td><p>Articulation joint</p></td>
+<td><p>position-drive stiffness per axis; angular axes use force per degree</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">jointDamping</span></code></p></td>
+<td><p>Articulation joint</p></td>
+<td><p>velocity-drive damping per axis; angular axes use force per degree per second</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">jointLimit</span></code></p></td>
+<td><p>Articulation joint</p></td>
+<td><p>interleaved low/high values per axis; angular axes use degrees</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">jointMaxVelocity</span></code></p></td>
+<td><p>Articulation joint</p></td>
+<td><p>one limit per axis; angular axes use degrees per second</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">jointMaxForce</span></code></p></td>
+<td><p>Articulation joint</p></td>
+<td><p>one effort limit per axis</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">jointArmature</span></code></p></td>
+<td><p>Articulation joint</p></td>
+<td><p>one armature value per axis</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">jointFriction</span></code></p></td>
+<td><p>Articulation joint</p></td>
+<td><p>one friction-effort value per axis</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">joint_q</span></code></p></td>
+<td><p>Joint</p></td>
+<td><p>one or more <code class="docutils literal notranslate"><span class="pre">float32xN</span></code> groups, partitioned by coordinate width <code class="docutils literal notranslate"><span class="pre">N</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">joint_qd</span></code></p></td>
+<td><p>Joint</p></td>
+<td><p>one or more <code class="docutils literal notranslate"><span class="pre">float32xN</span></code> groups, partitioned by velocity width <code class="docutils literal notranslate"><span class="pre">N</span></code></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">body_q</span></code> is <code class="docutils literal notranslate"><span class="pre">[px,</span> <span class="pre">py,</span> <span class="pre">pz,</span> <span class="pre">qx,</span> <span class="pre">qy,</span> <span class="pre">qz,</span> <span class="pre">qw]</span></code>: the body origin’s world pose. <code class="docutils literal notranslate"><span class="pre">body_qd</span></code> is <code class="docutils literal notranslate"><span class="pre">[vx,</span> <span class="pre">vy,</span> <span class="pre">vz,</span> <span class="pre">wx,</span> <span class="pre">wy,</span> <span class="pre">wz]</span></code>: center-of-mass linear velocity followed by angular velocity, both in world space. Native <code class="docutils literal notranslate"><span class="pre">joint_q</span></code> and <code class="docutils literal notranslate"><span class="pre">joint_qd</span></code> values use Newton generalized coordinates. Their angles use radians and angular rates use radians per second. Free and distance joint velocities use the parent joint’s frame. D6 joints store linear coordinates before angular coordinates.</p>
+<p>The split pose and velocity fields have the same values as their <code class="docutils literal notranslate"><span class="pre">body_q</span></code> and <code class="docutils literal notranslate"><span class="pre">body_qd</span></code> components. The acceleration fields similarly split <code class="docutils literal notranslate"><span class="pre">State.body_qdd</span></code>; request that optional Newton state field before creating the state. Split fields are produced by a device kernel for the selected rows only and do not make a host round trip.</p>
+<p><code class="docutils literal notranslate"><span class="pre">gravity</span></code> aliases <code class="docutils literal notranslate"><span class="pre">Model.gravity</span></code> for the first populated <code class="docutils literal notranslate"><span class="pre">PhysicsScene</span></code>. It contains the effective direction and magnitude after ovnewton applies scene defaults, stage length units, and <code class="docutils literal notranslate"><span class="pre">NewtonSceneAPI.gravityEnabled</span></code>. A stage without a <code class="docutils literal notranslate"><span class="pre">PhysicsScene</span></code> has no scene output path, even though Newton still has a default gravity value.</p>
+<p>For a caller-owned model, <code class="docutils literal notranslate"><span class="pre">gravity</span></code> borrows the row for the bound bodies’ Newton world, including the global world. The mapping is resolved when the binding is created. A model with multiple gravity rows must have bound bodies in exactly one world; otherwise a gravity read raises <code class="docutils literal notranslate"><span class="pre">ValueError</span></code>. Other output reads remain available.</p>
+<p><code class="docutils literal notranslate"><span class="pre">mass</span></code>, <code class="docutils literal notranslate"><span class="pre">inertia</span></code>, and <code class="docutils literal notranslate"><span class="pre">centerOfMassPosition</span></code> expose the final values in <code class="docutils literal notranslate"><span class="pre">Model.body_mass</span></code>, <code class="docutils literal notranslate"><span class="pre">Model.body_inertia</span></code>, and <code class="docutils literal notranslate"><span class="pre">Model.body_com</span></code>. Inertia is relative to the center of mass and expressed in the body frame. The center-of-mass position is an offset in the body frame. Reading these values does not normalize units. Each group aliases its model array; no value is copied.</p>
+<p>Ovnewton does not expose <code class="docutils literal notranslate"><span class="pre">centerOfMassOrientation</span></code>. Newton stores a complete body-frame inertia matrix rather than a separate principal-axis orientation, so reporting one would require a new shared decomposition contract.</p>
+<p><code class="docutils literal notranslate"><span class="pre">friction</span></code> and <code class="docutils literal notranslate"><span class="pre">restitution</span></code> expose <code class="docutils literal notranslate"><span class="pre">Model.shape_material_mu</span></code> and <code class="docutils literal notranslate"><span class="pre">Model.shape_material_restitution</span></code> in Newton’s native shape order. Each row is padded with zeros to the largest <code class="docutils literal notranslate"><span class="pre">shapeCount</span></code> in the query; <code class="docutils literal notranslate"><span class="pre">dtype.lanes</span></code> is that width. Newton stores one friction coefficient, so ovnewton does not report it as distinct <code class="docutils literal notranslate"><span class="pre">staticFriction</span></code> and <code class="docutils literal notranslate"><span class="pre">dynamicFriction</span></code> values. These fields are gathered on the model device.</p>
+<p>Material reads support at most 255 shapes per selected body, matching ovstage’s DLTensor lane limit. A wider material read raises <code class="docutils literal notranslate"><span class="pre">ValueError</span></code>; <code class="docutils literal notranslate"><span class="pre">shapeCount</span></code> and other body fields remain readable. Selecting only bodies within the limit still works.</p>
+<p>The four articulation-root fields report the pose and velocity of the root body. Select the prim that has <code class="docutils literal notranslate"><span class="pre">PhysicsArticulationRootAPI</span></code>, not the root body’s path. Ovnewton preserves that authored prim path as the Newton articulation label. The split values are gathered into dense rows on the model device.</p>
+<p><code class="docutils literal notranslate"><span class="pre">jointPosition</span></code> and <code class="docutils literal notranslate"><span class="pre">jointVelocity</span></code> use the shared per-axis convention from ovphysx. Linear axes stay in the model’s length units. Angular positions use degrees and angular velocities use degrees per second. Signed values follow the authored USD body order, even when Newton has reordered a world-attached joint. Revolute, prismatic, and scalar-coordinate D6 joints provide <code class="docutils literal notranslate"><span class="pre">jointPosition</span></code>. Spherical position is not returned because Newton stores it as a quaternion, but its three angular velocities are available. These values are converted on the model device. Use <code class="docutils literal notranslate"><span class="pre">joint_q</span></code> and <code class="docutils literal notranslate"><span class="pre">joint_qd</span></code> when an application needs Newton’s generalized-coordinate layout, parent-child order, and radians.</p>
+<p>Joint targets come from the <code class="docutils literal notranslate"><span class="pre">Control</span></code> passed to the same read; ovnewton does not substitute model defaults. <code class="docutils literal notranslate"><span class="pre">jointPositionTarget</span></code> follows the same supported position axes as <code class="docutils literal notranslate"><span class="pre">jointPosition</span></code>. <code class="docutils literal notranslate"><span class="pre">jointVelocityTarget</span></code> follows <code class="docutils literal notranslate"><span class="pre">jointVelocity</span></code>. Both use authored body order. Joint properties come from the connected model. Angular targets, limits, and maximum velocities use degrees. Angular stiffness and damping are converted from Newton’s per-radian values to per-degree values. Effort limits, armature, and friction are unchanged. <code class="docutils literal notranslate"><span class="pre">jointLimit</span></code> stores <code class="docutils literal notranslate"><span class="pre">[low,</span> <span class="pre">high]</span></code> for each axis, so a group with <code class="docutils literal notranslate"><span class="pre">N</span></code> axes has <code class="docutils literal notranslate"><span class="pre">2N</span></code> lanes. An unlimited bound is reported as the positive or negative maximum <code class="docutils literal notranslate"><span class="pre">float32</span></code> value.</p>
+<p>Newton has one friction-effort value per joint axis, so ovnewton does not expose separate joint static and dynamic friction fields. It also does not expose <code class="docutils literal notranslate"><span class="pre">jointActuationForce</span></code> because <code class="docutils literal notranslate"><span class="pre">Control.joint_f</span></code> is an input, not measured solver output. Newton’s target mode does not carry the same force-versus-acceleration meaning as the shared <code class="docutils literal notranslate"><span class="pre">jointDriveType</span></code>, so that field is not exposed either.</p>
+<p>The <code class="docutils literal notranslate"><span class="pre">state</span></code> argument may be omitted when a read requests only model-backed fields. State-backed fields still require it. The <code class="docutils literal notranslate"><span class="pre">control</span></code> argument is required only for target fields.</p>
+<p>Lengths use the Newton model’s units. When ovnewton builds the model, it uses the stage’s length units. For example, a centimetre stage returns positions in centimetres and linear velocities in centimetres per second, not metres.</p>
+<p>Rod-joint <code class="docutils literal notranslate"><span class="pre">joint_q</span></code> and <code class="docutils literal notranslate"><span class="pre">joint_qd</span></code> values are outside this contract: Newton does not use them as generalized positions and velocities. Read the rod segments’ <code class="docutils literal notranslate"><span class="pre">body_q</span></code> and <code class="docutils literal notranslate"><span class="pre">body_qd</span></code> instead.</p>
+<p>Generated free joints may have Newton labels instead of USD prim paths. To identify a standalone rigid body by its USD path, select the body and read <code class="docutils literal notranslate"><span class="pre">body_q</span></code> or <code class="docutils literal notranslate"><span class="pre">body_qd</span></code>.</p>
+<p>A read may return several groups because joints can have different numbers of coordinates or axes. Each group contains one attribute and one width, so several groups may use the same attribute name. <code class="docutils literal notranslate"><span class="pre">group.tensor(0).dtype.lanes</span></code> gives the width. The raw <code class="docutils literal notranslate"><span class="pre">DLTensor</span></code> has one dimension: <code class="docutils literal notranslate"><span class="pre">shape[0]</span></code> gives the number of rows, and <code class="docutils literal notranslate"><span class="pre">dtype.lanes</span></code> gives the number of values in each row.</p>
+<p><code class="docutils literal notranslate"><span class="pre">query.attributes</span></code> lists the fields available for the selected objects. <code class="docutils literal notranslate"><span class="pre">query.object_type</span></code> and <code class="docutils literal notranslate"><span class="pre">query.scope</span></code> report the selection contract. An unknown attribute is an error. A known attribute returns no group when none of the selected objects provide it. Requesting no attributes also returns no groups. Selecting a path that is not a readable body, articulation root, physics scene, or joint is an error. Fixed joints are not readable because they have no coordinates.</p>
+<p>Groups are read-only. Native fields point directly to the supplied Newton state or connected model; split fields own a result buffer. The current <code class="docutils literal notranslate"><span class="pre">ordinal</span> <span class="pre">==</span> <span class="pre">0</span></code> and zero-valued metadata are placeholders; they do not identify a simulation step. The application owns Newton stepping, so it must call <code class="docutils literal notranslate"><span class="pre">read()</span></code> with the state and control from one sample and prevent them from changing while the read is being issued. A public tick/time/ordinal contract still needs agreement. Keep borrowed arrays unchanged until every consumer has finished reading them.</p>
+<p><code class="docutils literal notranslate"><span class="pre">group.data_row_index(i)</span></code> maps logical prim <code class="docutils literal notranslate"><span class="pre">i</span></code> to its tensor row. Therefore, <code class="docutils literal notranslate"><span class="pre">prim_paths[i]</span></code> names the prim, and <code class="docutils literal notranslate"><span class="pre">data_rows[i]</span></code> gives its corresponding row in each group tensor. Sparse groups may also expose the row map through <code class="docutils literal notranslate"><span class="pre">data_index_dlpack()</span></code>.</p>
+<p>CPU data is ready when <code class="docutils literal notranslate"><span class="pre">read()</span></code> returns. On CUDA, call <code class="docutils literal notranslate"><span class="pre">read()</span></code> on the Warp stream that last wrote the requested state or model arrays, or first make the current stream wait for that work. The returned event covers only work ordered on that stream. A consumer on another CUDA stream must wait for the reported event on its own <code class="docutils literal notranslate"><span class="pre">consumer_stream</span></code>:</p>
+<div class="highlight-python notranslate"><div class="highlight"><pre><span></span><span class="k">if</span> <span class="n">group</span><span class="o">.</span><span class="n">cuda_sync</span><span class="o">.</span><span class="n">wait_event</span><span class="p">:</span>
+    <span class="n">event</span> <span class="o">=</span> <span class="n">wp</span><span class="o">.</span><span class="n">Event</span><span class="p">(</span>
+        <span class="n">device</span><span class="o">=</span><span class="n">binding</span><span class="o">.</span><span class="n">model</span><span class="o">.</span><span class="n">device</span><span class="p">,</span>
+        <span class="n">cuda_event</span><span class="o">=</span><span class="n">group</span><span class="o">.</span><span class="n">cuda_sync</span><span class="o">.</span><span class="n">wait_event</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="n">consumer_stream</span><span class="o">.</span><span class="n">wait_event</span><span class="p">(</span><span class="n">event</span><span class="p">)</span>
+</pre></div>
+</div>
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="concepts.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">Concepts</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="support.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">Support</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+
+
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#select-an-object-type">Select an object type</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#native-output-contract">Native output contract</a></li>
+</ul>
+  </nav></div>
+
+</div></div>
+              
+            
+
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="_static/scripts/bootstrap.js?digest=90905a2f556bf617f1a9"></script>
+<script defer src="_static/scripts/pydata-sphinx-theme.js?digest=90905a2f556bf617f1a9"></script>
+
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+<a class="footer-brand logo" href="https://www.nvidia.com">
+  <img src="_static/nvidia-logo-horiz-rgb-1c-blk-for-screen.svg" class="logo__image only-light" alt="NVIDIA"/>
+  <img src="_static/nvidia-logo-horiz-rgb-1c-wht-for-screen.svg" class="logo__image only-dark" alt="NVIDIA"/>
+</a></div>
+      
+        <div class="footer-item">
+
+<div class="footer-links">
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/privacy-policy/">Privacy Policy</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/privacy-center/">Your Privacy Choices</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/terms-of-service/">Terms of Service</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/accessibility/">Accessibility</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/company-policies/">Corporate Policies</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/product-security/">Product Security</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/contact/">Contact</a>
+  
+  
+  
+</div>
+</div>
+      
+        <div class="footer-item">
+
+
+
+
+  <p class="copyright">
+    
+      Copyright © 2026, NVIDIA CORPORATION &amp; AFFILIATES.
+      <br/>
+    
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+</div>
+
+  </footer>
+  </body>
+</html>
