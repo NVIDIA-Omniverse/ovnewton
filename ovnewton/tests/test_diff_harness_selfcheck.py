@@ -5,8 +5,20 @@
 ORIENTATION and full inertia."""
 import newton
 import numpy as np
+import pytest
 
 from . import diff_harness as dh
+
+
+def test_reference_subprocess_limits_openusd_worker_threads(monkeypatch):
+    monkeypatch.delenv("PXR_WORK_THREAD_LIMIT", raising=False)
+    result = dh._run_reference(
+        """
+import base64, os, pickle
+print("PICKLE64 " + base64.b64encode(pickle.dumps(os.environ["PXR_WORK_THREAD_LIMIT"])).decode())
+"""
+    )
+    assert result == "1"
 
 
 def _arrs(pos, quat, inertia_diag):
@@ -86,6 +98,46 @@ def test_compare_catches_shape_geometry_difference():
     assert any("shape_scale" in m for m in dh.compare_models(ref, ours, check_joints=False, check_shapes=True))
 
 
+def _mesh_arrays():
+    arrays = _shape_arrays()
+    vertices = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=np.float32)
+    arrays["shape_mesh"][0] = (vertices, np.array([0, 1, 2, 0, 3, 1], dtype=np.int32))
+    return arrays
+
+
+def test_compare_accepts_equivalent_expanded_mesh_triangles():
+    ref, ours = _mesh_arrays(), _mesh_arrays()
+    vertices, indices = ours["shape_mesh"][0]
+    ours["shape_mesh"][0] = (vertices[indices], np.array([3, 4, 5, 1, 2, 0]))
+    assert not dh.compare_models(ref, ours, check_joints=False, check_shapes=True)
+
+
+def test_compare_accepts_reindexed_mesh_with_small_coordinate_perturbation():
+    ref, ours = _mesh_arrays(), _mesh_arrays()
+    vertices, indices = ours["shape_mesh"][0]
+    vertices[0, 0] += 1e-6
+    ours["shape_mesh"][0] = (vertices[indices], np.array([3, 4, 5, 1, 2, 0]))
+    assert not dh.compare_models(ref, ours, check_joints=False, check_shapes=True)
+
+
+@pytest.mark.parametrize("change", ["position", "missing", "duplicate", "substitution", "winding"])
+def test_compare_rejects_changed_mesh_triangles(change):
+    ref, ours = _mesh_arrays(), _mesh_arrays()
+    vertices, indices = ours["shape_mesh"][0]
+    if change == "position":
+        vertices[0, 0] = 0.25
+    elif change == "missing":
+        indices = indices[:3]
+    elif change == "duplicate":
+        indices = np.concatenate([indices, indices[:3]])
+    elif change == "substitution":
+        indices = np.tile(indices[:3], 2)
+    else:
+        indices = indices.reshape(-1, 3)[:, ::-1].reshape(-1)
+    ours["shape_mesh"][0] = (vertices, indices)
+    assert any("shape_mesh" in m for m in dh.compare_models(ref, ours, check_joints=False, check_shapes=True))
+
+
 def test_compare_catches_shape_flag_difference():
     ref = _shape_arrays()
     ours = _shape_arrays()
@@ -119,14 +171,21 @@ def test_compare_catches_shape_filter_pair_difference():
     ref = _shape_arrays()
     ours = _shape_arrays()
     ref["shape_collision_filter_pairs"] = [(0, 1)]
-    assert any("filter pairs" in m for m in dh.compare_models(ref, ours, check_joints=False, check_shapes=True))
+    assert any("collision filtering" in m for m in dh.compare_models(ref, ours, check_joints=False, check_shapes=True))
 
 
 def test_compare_catches_collision_group_behavior_difference():
     ref = _shape_arrays()
     ours = _shape_arrays()
     ours["shape_collision_group"][1] = 2
-    assert any("collision groups" in m for m in dh.compare_models(ref, ours, check_joints=False, check_shapes=True))
+    assert any("collision filtering" in m for m in dh.compare_models(ref, ours, check_joints=False, check_shapes=True))
+
+
+def test_compare_accepts_equivalent_group_and_pair_filters():
+    ref, ours = _shape_arrays(), _shape_arrays()
+    ref["shape_collision_group"][1] = 2
+    ours["shape_collision_filter_pairs"] = [(1, 0)]
+    assert not dh.compare_models(ref, ours, check_joints=False, check_shapes=True)
 
 
 def test_compare_catches_orphan_joint_membership_difference():

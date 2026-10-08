@@ -29,7 +29,7 @@ from ovnewton._src import _build, _runtime
 from ovnewton._src._build import _R3
 from ovnewton.examples import get_asset
 
-from .runtime_helpers import lanes_tensor
+from .runtime_helpers import lanes_tensor, warp_lanes_tensor
 
 if not wp.is_cuda_available():
     pytest.skip("CUDA not available", allow_module_level=True)
@@ -188,8 +188,8 @@ def test_runtime_ingress_matches_groups_by_prim_identity():
         wp.array([20.0], dtype=wp.float32, device=runtime.device),
     ]
     groups = [
-        _ReadGroup(_runtime._device_dltensor(sources[1], n=1, lanes=1, code=2, bits=32), row=1),
-        _ReadGroup(_runtime._device_dltensor(sources[0], n=1, lanes=1, code=2, bits=32), row=0),
+        _ReadGroup(warp_lanes_tensor(sources[1], count=1, lanes=1), row=1),
+        _ReadGroup(warp_lanes_tensor(sources[0], count=1, lanes=1), row=0),
     ]
     stage = _ReadStage(groups)
 
@@ -206,17 +206,15 @@ def test_runtime_ingress_matches_groups_by_prim_identity():
 
 
 # ── numpy reference encoders (the oracle the Warp kernels must reproduce) ──
-# The readable spec for the omni:fabric:worldMatrix / physics:velocity encode.
+# The readable spec for the omni:xform / physics:velocity encode.
 # _runtime's production path is the Warp kernels; these exist only to pin them
 # bit-for-bit (no production caller — they live with the test that consumes them).
 
-def encode_pose_oracle(trans: np.ndarray, quat: np.ndarray) -> np.ndarray:
-    """Encode body poses ``(trans (N,3), quat xyzw (N,4))`` into ovstage
-    ``omni:fabric:worldMatrix`` rows (flat ``(N,16)`` float64, GfMatrix4d).
+def encode_pose_oracle(trans: np.ndarray, quat: np.ndarray, scale: np.ndarray) -> np.ndarray:
+    """Encode body poses and signed scale into ovstage ``omni:xform`` rows.
 
-    Inverse of ``_build._decode_pose`` at unit scale: the stored 3x3 is
-    the *row-vector* rotation ``Rᵀ`` (row ``i`` is column ``i`` of the column-vector
-    rotation Newton carries), translation goes in row 3."""
+    The stored 3x3 is the row-vector ``S·Rᵀ`` and translation is in row 3.
+    """
     q = np.asarray(quat, dtype=np.float64)
     q = q / np.where((nrm := np.linalg.norm(q, axis=1, keepdims=True)) > 0.0, nrm, 1.0)
     x, y, z, w = q[:, 0], q[:, 1], q[:, 2], q[:, 3]
@@ -226,7 +224,8 @@ def encode_pose_oracle(trans: np.ndarray, quat: np.ndarray) -> np.ndarray:
     rcv[:, 1, 0], rcv[:, 1, 1], rcv[:, 1, 2] = 2.0 * (x * y + w * z), 1.0 - 2.0 * (x * x + z * z), 2.0 * (y * z - w * x)
     rcv[:, 2, 0], rcv[:, 2, 1], rcv[:, 2, 2] = 2.0 * (x * z - w * y), 2.0 * (y * z + w * x), 1.0 - 2.0 * (x * x + y * y)
     out = np.zeros((n, 16), dtype=np.float64)
-    out[:, _R3] = np.transpose(rcv, (0, 2, 1)).reshape(n, 9)   # row-vector = transpose
+    row_rotation = np.transpose(rcv, (0, 2, 1))
+    out[:, _R3] = (np.asarray(scale)[:, :, None] * row_rotation).reshape(n, 9)
     out[:, 12:15] = np.asarray(trans, dtype=np.float64)
     out[:, 15] = 1.0
     return out
@@ -252,37 +251,42 @@ def _random_body_qd(n: int) -> np.ndarray:
     return _RNG.uniform(-3.0, 3.0, size=(n, 6)).astype(np.float32)
 
 
-def test_body_publication_kernel_matches_cpu_encoders():
+@pytest.mark.parametrize("device", ["cpu", _DEVICE])
+def test_body_publication_kernel_matches_cpu_encoders(device):
     """The Warp publication encoder matches both NumPy body-column oracles."""
     n = 16
 
     bq_np = _random_body_q(n)
     bqd_np = _random_body_qd(n)
-    bq_wp = wp.array(bq_np, dtype=wp.transformf, device=_DEVICE)
-    bqd_wp = wp.array(bqd_np, dtype=wp.spatial_vectorf, device=_DEVICE)
+    scale_np = _RNG.uniform(0.25, 3.0, size=(n, 3)).astype(np.float32)
+    scale_np[0] *= -1.0
+    bq_wp = wp.array(bq_np, dtype=wp.transformf, device=device)
+    bqd_wp = wp.array(bqd_np, dtype=wp.spatial_vectorf, device=device)
+    scale_wp = wp.array(scale_np, dtype=wp.vec3, device=device)
 
     # CPU reference
     bq64 = bq_np.astype(np.float64)
-    cpu_pose = encode_pose_oracle(bq64[:, :3], bq64[:, 3:7])
+    cpu_pose = encode_pose_oracle(bq64[:, :3], bq64[:, 3:7], scale_np)
     cpu_linear, cpu_angular = encode_velocity_oracle(bqd_np)
 
-    # GPU result
-    pose_out = wp.zeros(n * 16, dtype=wp.float64, device=_DEVICE)
-    linear_out = wp.zeros(n * 3, dtype=wp.float32, device=_DEVICE)
-    angular_out = wp.zeros(n * 3, dtype=wp.float32, device=_DEVICE)
+    # Warp result
+    pose_out = wp.zeros(n * 16, dtype=wp.float64, device=device)
+    linear_out = wp.zeros(n * 3, dtype=wp.float32, device=device)
+    angular_out = wp.zeros(n * 3, dtype=wp.float32, device=device)
     wp.launch(
         _runtime._encode_body_for_ovstage_kernel,
         dim=n,
         inputs=[
             bq_wp,
             bqd_wp,
+            scale_wp,
             pose_out,
             linear_out,
             angular_out,
         ],
-        device=_DEVICE,
+        device=device,
     )
-    wp.synchronize_device(_DEVICE)
+    wp.synchronize_device(device)
     gpu_pose = pose_out.numpy().reshape(n, 16)
     gpu_linear = linear_out.numpy().reshape(n, 3)
     gpu_angular = angular_out.numpy().reshape(n, 3)
@@ -298,27 +302,9 @@ def test_body_publication_kernel_matches_cpu_encoders():
     )
 
 
-def test_device_dltensor_derives_cuda_from_array():
-    """_device_dltensor labels a CUDA Warp array kDLCUDA (device from the array).
-
-    This is the crux of the single-path design: no branch on device — the
-    DLTensor's device_type is read off the output array. A cuda:0 array must
-    produce a kDLCUDA tensor carrying that array's pointer and ordinal."""
-    from ovstage import DLDeviceType
-
-    wa = wp.zeros(16, dtype=wp.float64, device=_DEVICE)
-    t = _runtime._device_dltensor(wa, n=1, lanes=16, code=2, bits=64)
-    assert t.device.device_type.value == DLDeviceType.kDLCUDA, (
-        f"expected kDLCUDA for a {_DEVICE} array, got {t.device.device_type}"
-    )
-    assert int(t.data) == int(wa.ptr), "DLTensor data pointer != Warp array ptr"
-    assert t.device.device_id == int(wa.device.ordinal), "device_id != array ordinal"
-    assert t.dtype.code == 2 and t.dtype.bits == 64 and t.dtype.lanes == 16
-
-
 def test_runtime_tensor_source_view_aliases_declared_device():
     gpu = wp.array([1.0, 2.0, 3.0], dtype=wp.float32, device=_DEVICE)
-    gpu_tensor = _runtime._device_dltensor(gpu, n=1, lanes=3, code=2, bits=32)
+    gpu_tensor = warp_lanes_tensor(gpu, count=1, lanes=3)
     alias, source_device = _runtime._tensor_source_view(
         gpu_tensor,
         dtype=wp.float32,
@@ -348,7 +334,7 @@ def test_runtime_ingress_waits_for_cuda_producer_event(monkeypatch, destination_
         wp.copy(source, source_value)
         producer_stream.record_event(producer_event)
 
-    tensor = _runtime._device_dltensor(source, n=1, lanes=1, code=2, bits=32)
+    tensor = warp_lanes_tensor(source, count=1, lanes=1)
     group = _ReadGroup(tensor, wait_event=producer_event.cuda_event)
     stage = _ReadStage(group)
     waits = []
@@ -388,7 +374,7 @@ def test_runtime_ingress_waits_for_cuda_producer_stream(monkeypatch, destination
     with wp.ScopedStream(producer_stream):
         wp.copy(source, source_value)
 
-    tensor = _runtime._device_dltensor(source, n=1, lanes=1, code=2, bits=32)
+    tensor = warp_lanes_tensor(source, count=1, lanes=1)
     group = _ReadGroup(tensor, cuda_stream=producer_stream.cuda_stream)
     stage = _ReadStage(group)
     waits = []
@@ -430,7 +416,7 @@ def test_runtime_ingress_waits_for_cuda_producer_stream(monkeypatch, destination
 def test_runtime_ingress_maps_default_cuda_stream_sentinel(monkeypatch):
     source = wp.array([23.0], dtype=wp.float32, device=_DEVICE)
     destination = wp.zeros_like(source)
-    tensor = _runtime._device_dltensor(source, n=1, lanes=1, code=2, bits=32)
+    tensor = warp_lanes_tensor(source, count=1, lanes=1)
     group = _ReadGroup(tensor, cuda_stream=1)
     stage = _ReadStage(group)
     consumer_stream = wp.Stream(destination.device)
@@ -456,7 +442,7 @@ def test_runtime_ingress_honors_combined_cuda_sync(monkeypatch):
     producer_stream = wp.Stream(_DEVICE)
     producer_event = wp.Event(_DEVICE)
     producer_stream.record_event(producer_event)
-    tensor = _runtime._device_dltensor(source, n=1, lanes=1, code=2, bits=32)
+    tensor = warp_lanes_tensor(source, count=1, lanes=1)
     group = _ReadGroup(
         tensor,
         cuda_stream=producer_stream.cuda_stream,
@@ -503,7 +489,7 @@ def test_runtime_ingress_rejects_cuda_sync_on_cpu_data(cuda_stream, wait_event):
 def test_runtime_ingress_retains_groups_when_stream_sync_fails(monkeypatch):
     source = wp.array([3.0], dtype=wp.float32, device=_DEVICE)
     destination = wp.zeros_like(source)
-    group = _ReadGroup(_runtime._device_dltensor(source, n=1, lanes=1, code=2, bits=32))
+    group = _ReadGroup(warp_lanes_tensor(source, count=1, lanes=1))
     stage = _ReadStage(group)
     synchronize_stream = wp.synchronize_stream
     consumer_stream = wp.Stream(_DEVICE)
@@ -523,7 +509,7 @@ def test_runtime_ingress_retains_groups_when_stream_sync_fails(monkeypatch):
 def test_runtime_ingress_rejects_graph_capture_before_read(monkeypatch):
     source = wp.array([3.0], dtype=wp.float32, device=_DEVICE)
     destination = wp.zeros_like(source)
-    stage = _ReadStage(_ReadGroup(_runtime._device_dltensor(source, n=1, lanes=1, code=2, bits=32)))
+    stage = _ReadStage(_ReadGroup(warp_lanes_tensor(source, count=1, lanes=1)))
     stream = SimpleNamespace(device=SimpleNamespace(is_capturing=True))
 
     monkeypatch.setattr(wp, "get_stream", lambda _device: stream)
@@ -599,7 +585,28 @@ def test_runtime_writer_device_resident_path():
 
         # The runtime writer encodes on model.device (no .numpy() on body_q/body_qd)
         # and writes a device DLTensor over the single path.
-        ovnewton.StageBinding(stage, model).update_to_ovstage(state, ordinal=2)
+        binding = ovnewton.StageBinding(stage, model)
+        xform_token = pd.intern_token("omni:xform")
+        reset_token = pd.intern_token("omni:resetXformStack")
+        reset_write = next(
+            write
+            for _, writes in binding._publication_batches
+            for write in writes
+            if write.attribute == reset_token
+        )
+        xform_write = next(
+            write
+            for _, writes in binding._publication_batches
+            for write in writes
+            if write.attribute == xform_token
+        )
+        assert xform_write.tensors.device.device_type.value == ovstage.DLDeviceType.kDLCUDA
+        assert xform_write.tensors.device.device_id == int(model.device.ordinal)
+        assert int(xform_write.tensors.data) == int(binding._runtime.pose_out.ptr)
+        assert reset_write.tensors.device.device_type.value == ovstage.DLDeviceType.kDLCUDA
+        assert reset_write.tensors.device.device_id == int(model.device.ordinal)
+        assert int(reset_write.tensors.data) == int(binding._runtime.reset_xform_stack_out.ptr)
+        binding.update_to_ovstage(state, ordinal=2)
         stage.advance_write_floor(ordinal=2).wait()
 
         # Read back and verify values are sensible (full round-trip is tested in
@@ -608,16 +615,16 @@ def test_runtime_writer_device_resident_path():
         from ovnewton._src import _stage  # noqa: PLC0415
         plist = pd.create_path_list_from_strings(list(body_paths))
         query = stage.query_from_path_list(plist)
-        wm = _stage.read_fixed(stage, pd, query, "omni:fabric:worldMatrix", ordinal=2)
+        xform = _stage.read_fixed(stage, pd, query, "omni:xform", ordinal=2)
         stage.release_query(query).wait()
         pd.destroy_path_list(plist)
 
-    mats = np.stack([np.asarray(wm[i], dtype=np.float64).reshape(16) for i in range(n)])
+    mats = np.stack([np.asarray(xform[i], dtype=np.float64).reshape(16) for i in range(n)])
     # The diagonal entries of rcv (which go into out[0], out[5], out[10]) should
     # sum to ≈3 for an identity rotation — any non-degenerate rotation has trace > -1.
     traces = mats[:, 0] + mats[:, 5] + mats[:, 10]
     assert np.all(traces > -1.0 + 1e-5), (
-        f"worldMatrix diagonal traces suspiciously low: {traces}"
+        f"omni:xform diagonal traces suspiciously low: {traces}"
     )
 
 

@@ -178,7 +178,9 @@ def Xform "World" {
         },
         "/World/NeuralActuator": {
             "newton:targets": ["/World/Joint"],
-            "newton:modelPath": ["controller.json"],
+            # Scalar assets are stored as authored and resolved token ids.
+            # This anonymous layer has no base path, so resolution is empty.
+            "newton:modelPath": ["controller.json", ""],
             "newton:lookupPositions": [-1.0, 0.0, 1.0],
             "newton:lookupEfforts": [-2.0, 0.0, 2.0],
         },

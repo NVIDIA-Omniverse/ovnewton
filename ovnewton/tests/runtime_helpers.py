@@ -22,6 +22,15 @@ def lanes_tensor(array: np.ndarray, lanes: int):
     return make_dltensor(array, dtype=dtype, shape=[array.shape[0]], ndim=1)
 
 
+def warp_lanes_tensor(array: Any, count: int, lanes: int):
+    """Describe a contiguous Warp array through ovstage's DLPack adapter."""
+    from ovstage import DLDataType, DLDataTypeCode, make_dltensor
+
+    producer = array if lanes == 1 else array.reshape((count, lanes))
+    dtype = DLDataType(code=DLDataTypeCode.kDLFloat, bits=32, lanes=lanes)
+    return make_dltensor(producer, dtype=dtype, shape=[count], ndim=1)
+
+
 def read_body_state(
     stage: Any,
     path_dictionary: Any,

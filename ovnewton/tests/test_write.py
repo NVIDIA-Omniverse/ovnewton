@@ -3,9 +3,9 @@
 
 """Round-trip the body-pose write-back against the validated read.
 
-Writes a stepped/perturbed set of body transforms to ``omni:fabric:worldMatrix``
-through the production runtime transport, reads them back at the written
-ordinal, and decodes with the same ``_decode_pose`` the reader uses.
+Writes a stepped/perturbed set of body transforms to ``omni:xform`` through the
+production runtime transport, reads them back at the written ordinal, and
+decodes with the same ``_decode_pose`` the reader uses.
 Since the decode is independently validated against ``add_usd`` (test_diff),
 ``encode → write → read → decode == identity`` pins the write transport.
 """
@@ -23,6 +23,32 @@ from ovnewton.examples import get_asset
 from .runtime_helpers import lanes_tensor, read_body_state
 
 CARTPOLE = get_asset("scene_cartpole.usda")
+
+
+def test_scaled_body_pose_write_roundtrip(tmp_path):
+    asset = tmp_path / "scaled-body.usda"
+    asset.write_text(
+        """#usda 1.0
+def Xform "Body" (prepend apiSchemas = ["PhysicsRigidBodyAPI"]) {
+    double3 xformOp:scale = (-2, 3, 4)
+    uniform token[] xformOpOrder = ["xformOp:scale"]
+    def Cube "Collider" (prepend apiSchemas = ["PhysicsCollisionAPI"]) {}
+}
+""",
+        encoding="utf-8",
+    )
+
+    with ovstage.Stage("ovstage-scaled-body") as stage, ovstage.PathDictionary(stage) as pd:
+        population.open_usd(stage, str(asset), ordinal=1, domains=PopulationDomain.ALL)
+        stage.advance_write_floor(ordinal=1).wait()
+        binding = ovnewton.attach_ovstage(stage)
+        binding.update_to_ovstage(binding.model.state(), ordinal=2)
+        stage.advance_write_floor(ordinal=2).wait()
+        with _stage._path_list_query(stage, pd, binding.model.body_label) as query:
+            matrices = _stage.read_fixed(stage, pd, query, "omni:xform", ordinal=2)
+
+    _, _, scale = _build._decode_pose(np.stack([matrices[0]]))
+    np.testing.assert_allclose(scale, [[-2.0, -3.0, -4.0]])
 
 
 def test_runtime_tensor_contract_rejects_wrong_type_lanes_and_rank():
@@ -77,6 +103,11 @@ def test_cartpole_pose_write_roundtrip():
         stage.advance_write_floor(ordinal=1).wait()
         model = _build.build_model(stage, pd, ordinal=1)
         body_paths = model.body_label
+        with _stage._path_list_query(stage, pd, body_paths) as query:
+            initial = _stage.read_fixed(stage, pd, query, "omni:fabric:worldMatrix", ordinal=1)
+        _, _, expected_scale = _build._decode_pose(
+            np.stack([initial[i] for i in range(model.body_count)])
+        )
 
         # Target poses: shift translation and apply a fixed 30deg-about-Y rotation
         # to every body, so both the translation and rotation encode are exercised
@@ -95,15 +126,16 @@ def test_cartpole_pose_write_roundtrip():
         ovnewton.StageBinding(stage, model).update_to_ovstage(state, ordinal=2)
         stage.advance_write_floor(ordinal=2).wait()
 
-        # Read worldMatrix back at the written ordinal, decode with the reader's decode.
+        # Read the canonical local transform back at the written ordinal.
         plist = pd.create_path_list_from_strings(list(body_paths))
         query = stage.query_from_path_list(plist)
-        wm = _stage.read_fixed(stage, pd, query, "omni:fabric:worldMatrix", ordinal=2)
+        xform = _stage.read_fixed(stage, pd, query, "omni:xform", ordinal=2)
+        reset_xform_stack = _stage.read_fixed(stage, pd, query, "omni:resetXformStack", ordinal=2)
         stage.release_query(query).wait()
         pd.destroy_path_list(plist)
 
     ident = np.eye(4).reshape(16)
-    mats = np.stack([np.asarray(wm.get(i, ident), dtype=np.float64).reshape(16) for i in range(n)])
+    mats = np.stack([np.asarray(xform.get(i, ident), dtype=np.float64).reshape(16) for i in range(n)])
     trans, quat, scale = _build._decode_pose(mats)
 
     assert np.allclose(trans, target[:, :3], atol=1e-5), \
@@ -111,7 +143,9 @@ def test_cartpole_pose_write_roundtrip():
     # Quaternion is sign-ambiguous; compare via |dot|.
     dots = np.abs(np.sum(quat * target[:, 3:7], axis=1))
     assert np.all(dots > 1.0 - 1e-5), f"rotation round-trip mismatch, |dot|={dots}"
-    assert np.allclose(scale, 1.0, atol=1e-5), f"unexpected non-unit scale {scale}"
+    assert np.allclose(scale, expected_scale, atol=1e-5), \
+        f"scale round-trip mismatch:\n  got ={scale}\n  want={expected_scale}"
+    assert all(bool(reset_xform_stack[i]) for i in range(n))
 
 
 def test_cartpole_velocity_write_roundtrip():

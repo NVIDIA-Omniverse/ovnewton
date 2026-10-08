@@ -5,8 +5,20 @@
 API reference
 =============
 
+Package
+-------
+
+.. autodata:: ovnewton.__version__
+
 Attachment
 ----------
+
+.. autofunction:: ovnewton.register_usd_schemas
+
+.. autofunction:: ovnewton.add_ovstage
+
+.. autoclass:: ovnewton.OvstageImportResult
+   :members:
 
 .. autofunction:: ovnewton.attach_ovstage
 

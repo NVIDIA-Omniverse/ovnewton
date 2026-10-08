@@ -1,12 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Host-side reads and renderer-facing writes of ovstage transforms.
+"""Host-side reads and renderer-facing writes for the interactive camera.
 
-A thin wrapper over transform columns for a fixed set of prims. The examples
-use it to drive the interactive camera, and — while the ovrtx CUDA-write bug
-lasts — to mirror body poses back to the renderer (see ``USE_TRANSFORM_RELAY``
-in ``example_ovnewton_basic.py``).
+A thin wrapper over transform columns for a fixed set of prims.
 """
 
 import numpy as np
@@ -17,7 +14,6 @@ XFORM = "omni:xform"
 RESET_XFORM_STACK = "omni:resetXformStack"
 USD_PATH = "usd-path"
 USD_PRIM_TYPE = "usd-prim-type"
-
 
 def find_paths_by_type(stage, prim_type, ordinal=1):
     """Sorted paths of every prim of ``prim_type`` (e.g. ``"Camera"``)."""
@@ -105,7 +101,7 @@ class TransformRelay:
                 self._query,
                 RESET_XFORM_STACK,
                 ordinal=ordinal,
-                tensors=np.ones(self._count, dtype=np.uint8),
+                tensors=np.ones(self._count, dtype=np.bool_),
                 is_array=False,
             ).wait()
             self._reset_written = True

@@ -28,7 +28,7 @@ def PhysicsScene "physicsScene"
 }
 
 def Xform "cartPole" (
-    prepend apiSchemas = ["NewtonArticulationRootAPI"]
+    prepend apiSchemas = ["PhysicsArticulationRootAPI", "NewtonArticulationRootAPI"]
 )
 {
     bool newton:selfCollisionEnabled = 0
@@ -132,7 +132,9 @@ def Xform "cartPole" (
         float physics:upperLimit = 4
     }
 
-    def PhysicsRevoluteJoint "cartPoleJoint"
+    def PhysicsRevoluteJoint "cartPoleJoint" (
+        prepend apiSchemas = ["PhysicsJointStateAPI:angular"]
+    )
     {
         rel physics:body0 = </cartPole/cart>
         rel physics:body1 = </cartPole/pole1>
@@ -141,6 +143,7 @@ def Xform "cartPole" (
         point3f physics:localPos1 = (0, 0, -0.5)
         quatf physics:localRot0 = (1, 0, 0, 0)
         quatf physics:localRot1 = (1, 0, 0, 0)
+        float state:angular:physics:position = 25
     }
 
     def PhysicsRevoluteJoint "polePoleJoint"

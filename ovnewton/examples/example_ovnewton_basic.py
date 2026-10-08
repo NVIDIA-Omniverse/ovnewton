@@ -17,10 +17,52 @@ import warp as wp
 
 RENDER_PRODUCT = "/Render/Camera"
 LDR_COLOR_PATH = f"{RENDER_PRODUCT}/LdrColor"
+VBD_SOLVER_ITERATIONS = 40
 
-# ovrtx 0.4 does not observe CUDA transform writes. Mirror them through a host
-# write until the minimum supported ovrtx version no longer needs this path.
-USE_TRANSFORM_RELAY = True
+VBD_CONTACT_MATERIAL_OVERRIDE_USDA = """#usda 1.0
+(
+    defaultPrim = "ContactMaterial"
+)
+
+def Material "ContactMaterial" (
+    prepend apiSchemas = ["NewtonMaterialAPI"]
+)
+{
+    float newton:contactStiffness = 100000
+    float newton:contactDamping = 1000
+}
+"""
+
+
+def _solver_spec(newton, solver_name):
+    """Return the example specification for one Newton solver."""
+    return {
+        "xpbd": {
+            "register_attributes": newton.solvers.SolverXPBD.register_custom_attributes,
+            "finish_builder": None,
+            "create_solver": lambda model: newton.solvers.SolverXPBD(model, iterations=8),
+        },
+        # Feed MuJoCo-Warp contacts from Newton's collision pipeline and
+        # reserve enough constraints for the shipped rigid-body scene.
+        "mujoco": {
+            "register_attributes": newton.solvers.SolverMuJoCo.register_custom_attributes,
+            "finish_builder": None,
+            "create_solver": lambda model: newton.solvers.SolverMuJoCo(
+                model,
+                integrator="implicitfast",
+                njmax=128,
+                use_mujoco_contacts=False,
+            ),
+        },
+        "vbd": {
+            "register_attributes": newton.solvers.SolverVBD.register_custom_attributes,
+            "finish_builder": lambda builder: builder.color(),
+            "create_solver": lambda model: newton.solvers.SolverVBD(
+                model,
+                iterations=VBD_SOLVER_ITERATIONS,
+            ),
+        },
+    }[solver_name]
 
 
 class Example:
@@ -28,6 +70,7 @@ class Example:
 
     def __init__(self, args):
         self.args = args
+        solver_name = getattr(args, "solver", "xpbd")
         self.frame_dt = 1.0 / 60.0
         self.sim_substeps = 2
         self.sim_dt = self.frame_dt / self.sim_substeps
@@ -35,30 +78,50 @@ class Example:
         self.next_timing_time = time.time()
         self.frame_timing = False
         self.viewport = None
-        self.transform_relay = None
         self.renderer = None
         self.renderer_attached = False
 
         try:
             wp.set_device(args.device)
-            self.renderer = self._create_renderer()
 
-            # Newton and ovstage load OpenUSD. Import them only after ovrtx has
-            # initialized its USD plugins.
-            import newton
-            import ovstage
-            from ovstage import PopulationDomain, population
+            # ── 0. Register USD schemas ───────────────────────────
+            # Both libraries must publish their schema paths before ovstage's
+            # first schema read, including reads performed while ovrtx starts.
+            if not args.no_render:
+                from ovrtx import register_schema_paths
+
+                register_schema_paths()
 
             import ovnewton
 
-            scene = self._resolve_stage(args.stage)
+            ovnewton.register_usd_schemas()
+            self.renderer = self._create_renderer()
 
-            # ── 1. Populate the ovstage scene ─────────────────────────
+            # ── 1. Populate the ovstage scene ────────────────────────
+            import ovstage
+            from ovstage import PopulationDomain, population
+
+            scene = self._resolve_stage(args.stage)
+            apply_vbd_material_override = solver_name == "vbd" and args.stage in (
+                "scene_rigid_bodies",
+                "scene_rigid_bodies.usda",
+            )
+
             print(f"ovstage: loading scene {os.path.basename(scene)} ...")
             with wp.ScopedTimer("ovstage init", active=args.timing, synchronize=True):
                 self.stage = ovstage.Stage("ovnewton-basic")
                 population.open_usd(self.stage, scene, ordinal=1, domains=PopulationDomain.ALL)
-                self.stage.advance_write_floor(ordinal=1).wait()
+                if apply_vbd_material_override:
+                    # Temporary VBD-only USD tuning until these values can be
+                    # resolved from solver-specific PhysicsScene attributes.
+                    population.add_usd_reference_from_string(
+                        self.stage,
+                        VBD_CONTACT_MATERIAL_OVERRIDE_USDA,
+                        "/World/ContactMaterial",
+                    )
+                    self.ordinal = 2
+                    population.apply_usd_changes(self.stage, ordinal=self.ordinal)
+                self.stage.advance_write_floor(ordinal=self.ordinal).wait()
 
             # ── 2. Attach ovrtx to ovstage ─────────────────────────────
             if self.renderer is not None:
@@ -67,24 +130,35 @@ class Example:
                     self.renderer_attached = True
 
             # ── 3. Build a Newton model from ovstage ───────────────────
+            import newton
+
+            solver_spec = _solver_spec(newton, solver_name)
+            builder = newton.ModelBuilder()
+            solver_spec["register_attributes"](builder)
+
             with wp.ScopedTimer("ovnewton init", active=args.timing, synchronize=True):
-                self.binding = ovnewton.attach_ovstage(self.stage)
-                self.model = self.binding.model
+                import_result = ovnewton.add_ovstage(builder, self.stage, ordinal=self.ordinal)
+                finish_builder = solver_spec["finish_builder"]
+                if finish_builder is not None:
+                    finish_builder(builder)
+                self.model = builder.finalize(skip_validation_joints=import_result.has_orphan_joints)
             if self.model.body_count == 0:
                 raise RuntimeError("No rigid bodies were found in the scene")
 
             # The application owns the solver, state, control, and step loop.
-            self.solver = newton.solvers.SolverXPBD(self.model, iterations=8)
+            self.solver = solver_spec["create_solver"](self.model)
+            self.binding = ovnewton.attach_ovstage(self.stage, model=self.model, ordinal=self.ordinal)
+            self.collision_pipeline = newton.CollisionPipeline(self.model)
+            self.contacts = self.collision_pipeline.contacts()
+            print(f"newton: using {solver_name} solver")
             self.state_0 = self.model.state()
             self.state_1 = self.model.state()
             self.control = self.model.control()
-            self.contacts = self.model.contacts()
+
+            # Needed by maximal-coordinate solvers; harmless for MuJoCo.
+            newton.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, self.state_0)
             self.initial_body_q = self.state_0.body_q.numpy().copy()
 
-            if self.renderer is not None and USE_TRANSFORM_RELAY:
-                from .utils import TransformRelay
-
-                self.transform_relay = TransformRelay(self.stage, list(self.model.body_label))
         except Exception:
             try:
                 self.close()
@@ -114,7 +188,7 @@ class Example:
         with wp.ScopedTimer("step", active=self.frame_timing, synchronize=True):
             for _ in range(self.sim_substeps):
                 self.state_0.clear_forces()
-                self.model.collide(self.state_0, self.contacts)
+                self.collision_pipeline.collide(self.state_0, self.contacts)
                 self.solver.step(self.state_0, self.state_1, self.control, self.contacts, self.sim_dt)
                 self.state_0, self.state_1 = self.state_1, self.state_0
 
@@ -123,9 +197,6 @@ class Example:
         with wp.ScopedTimer("update to ovstage", active=self.frame_timing, synchronize=True):
             self.ordinal += 1
             self.binding.update_to_ovstage(self.state_0, ordinal=self.ordinal)
-            if self.transform_relay is not None:
-                # TODO: Replace this private pose buffer when ovrtx observes CUDA writes.
-                self.transform_relay.write(self.binding._runtime.pose_out.numpy(), self.ordinal)
             if self.viewport is not None:
                 self.viewport.update_camera(self.frame_dt, self.ordinal)
             self.stage.advance_write_floor(self.ordinal).wait()
@@ -142,9 +213,6 @@ class Example:
             for product in products.values():
                 for output in product.frames:
                     ldr_color = output.render_vars.get(LDR_COLOR_PATH)
-                    if ldr_color is None:
-                        # TODO: Drop this fallback when ovrtx 0.4 is no longer supported.
-                        ldr_color = output.render_vars.get("LdrColor")
                     if ldr_color is None:
                         continue
                     if not self.args.headless:
@@ -177,8 +245,17 @@ class Example:
         from ovrtx import Renderer, RendererConfig
 
         with wp.ScopedTimer("ovrtx init", active=self.args.timing, synchronize=True):
-            renderer = Renderer(config=RendererConfig(sync_mode=True))
+            render_device_arg = getattr(self.args, "render_device", None)
+            render_device = None if render_device_arg is None else str(render_device_arg)
+            renderer = Renderer(
+                config=RendererConfig(
+                    sync_mode=True,
+                    active_cuda_gpus=render_device,
+                )
+            )
         print(f"ovrtx: renderer v{renderer.version}")
+        if render_device is not None:
+            print(f"ovrtx: rendering on CUDA-visible device {render_device}")
         return renderer
 
     def _present(self, ldr_color):
@@ -188,7 +265,14 @@ class Example:
 
         with ldr_color.map(device=Device.CUDA) as render_var:
             pixels = wp.from_dlpack(render_var, dtype=wp.vec4ub)
-            height, width = int(pixels.shape[0]), int(pixels.shape[1])
+            # Record the copy stream now; pixels keeps the buffer alive until
+            # the view is released, so presentation can use it after unmap().
+            render_var.unmap(stream=pixels.device.stream.cuda_stream)
+
+        height, width = int(pixels.shape[0]), int(pixels.shape[1])
+        # CUDA/OpenGL interop uses the rendered image's device, not the
+        # simulation device, which may be CPU or a different GPU.
+        with wp.ScopedDevice(pixels.device):
             if self.viewport is None:
                 self.viewport = GLViewport(
                     "ovstage -> ovnewton -> ovrtx",
@@ -196,9 +280,7 @@ class Example:
                     height=height,
                     stage=self.stage,
                 )
-            window_open = self.viewport.show(pixels)
-            render_var.unmap(stream=pixels.device.stream.cuda_stream)
-            return window_open
+            return self.viewport.show(pixels)
 
     def _save_png(self, ldr_color, frame):
         from ovrtx import Device
@@ -242,9 +324,6 @@ class Example:
         """Release resources owned by the example."""
         if self.viewport is not None:
             self.viewport.close()
-        if self.transform_relay is not None:
-            self.transform_relay.close()
-            self.transform_relay = None
         if self.renderer is not None:
             if self.renderer_attached:
                 self.renderer.detach_ovstage()
@@ -257,6 +336,18 @@ class Example:
         """Create the command-line parser for this example."""
         parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
         parser.add_argument("--device", default="cuda:0", help="Warp device used for the simulation")
+        parser.add_argument(
+            "--solver",
+            choices=("xpbd", "mujoco", "vbd"),
+            default="xpbd",
+            help="Newton solver used to advance the scene",
+        )
+        parser.add_argument(
+            "--render-device",
+            type=int,
+            default=None,
+            help="CUDA-visible device index used by ovrtx; unset uses the ovrtx default",
+        )
         parser.add_argument(
             "--num-frames",
             type=int,

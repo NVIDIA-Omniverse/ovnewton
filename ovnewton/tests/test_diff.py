@@ -68,6 +68,11 @@ _SCHEMA_FILTER_GAP_FIELDS = {
     "humanoid": {"joint_q", "joint_qd"},
 }
 
+# Newton's default add_usd() resolver does not consume PhysicsJointStateAPI positions. The
+# shipped cartpole authors its first angle so MuJoCo-Warp starts from the same
+# leaning pose as the body transforms instead of snapping upright.
+_INTENTIONAL_ADD_USD_DIFFERENCES = {"cartpole": {"joint_q"}}
+
 MODEL_SCENES = [
     ("cartpole", CARTPOLE),
     ("ant", os.path.join(NEWTON_ASSETS, "ant.usda")),
@@ -156,14 +161,29 @@ def test_model_matches_add_usd(name, asset):
 
     mismatches = dh.compare_models(ref, ours, check_joints=True, check_articulations=True)
     gap_fields = _SCHEMA_FILTER_GAP_FIELDS.get(name, set())
-    unexpected = [m for m in mismatches if m.partition(":")[0].rsplit(".", 1)[-1] not in gap_fields]
+    excluded_fields = gap_fields | _INTENTIONAL_ADD_USD_DIFFERENCES.get(name, set())
+    unexpected = [m for m in mismatches if m.partition(":")[0].rsplit(".", 1)[-1] not in excluded_fields]
     assert not unexpected, f"{name} unexpected mismatches vs add_usd:\n  " + "\n  ".join(unexpected)
-    if mismatches:
-        observed = {m.partition(":")[0].rsplit(".", 1)[-1] for m in mismatches}
+    observed_gaps = {
+        m.partition(":")[0].rsplit(".", 1)[-1]
+        for m in mismatches
+        if m.partition(":")[0].rsplit(".", 1)[-1] in gap_fields
+    }
+    if observed_gaps:
         pytest.xfail(
             "the pinned ovstage cannot mirror the unregistered/unapplied joint schema fields: "
-            + ", ".join(sorted(observed))
+            + ", ".join(sorted(observed_gaps))
         )
+
+
+def _correct_newton_16_angular_velocity(ref, label, dof=0):
+    # Newton 1.6.0 and 1.6.1 kept initial angular velocities in degrees/s.
+    # Keep their other fields as the oracle, but require USD-correct units here.
+    if newton.__version__ in ("1.6.0", "1.6.1"):
+        joint = list(ref["joint_label"]).index(label)
+        index = ref["joint_qd_start"][joint] + dof
+        assert ref["joint_qd"][index] == pytest.approx(0.25)
+        ref["joint_qd"][index] = np.deg2rad(0.25)
 
 
 def test_authored_single_dof_initial_state_matches_add_usd(tmp_path):
@@ -198,6 +218,11 @@ def Xform "World" (prepend apiSchemas = ["PhysicsArticulationRootAPI"]) {
     )
     ref = dh.reference_model(str(asset), include_physx_resolver=True)
     model = _ovstage_model(str(asset), "joint-initial-state")
+    starts = model.joint_qd_start.numpy()
+    velocities = model.joint_qd.numpy()
+    assert velocities[starts[model.joint_label.index("/World/Revolute")]] == pytest.approx(np.deg2rad(0.25))
+    assert velocities[starts[model.joint_label.index("/World/Prismatic")]] == pytest.approx(-0.2)
+    _correct_newton_16_angular_velocity(ref, "/World/Revolute")
     mismatches = dh.compare_models(ref, dh._model_arrays(model), check_joints=True)
     assert not mismatches, "initial-state mismatches vs add_usd:\n  " + "\n  ".join(mismatches)
 
@@ -235,6 +260,10 @@ def Xform "World" (prepend apiSchemas = ["PhysicsArticulationRootAPI"]) {
     )
     ref = dh.reference_model(str(asset), include_physx_resolver=True)
     model = _ovstage_model(str(asset), "merged-joint-initial-state")
+    joint = model.joint_label.index("/World/Angular")
+    start = model.joint_qd_start.numpy()[joint]
+    assert model.joint_qd.numpy()[start:start + 2] == pytest.approx([-0.2, np.deg2rad(0.25)])
+    _correct_newton_16_angular_velocity(ref, "/World/Angular", dof=1)
     mismatches = dh.compare_models(ref, dh._model_arrays(model), check_joints=True)
     assert not mismatches, "merged initial-state mismatches vs add_usd:\n  " + "\n  ".join(mismatches)
 
@@ -451,29 +480,57 @@ def Xform "World" (prepend apiSchemas = ["PhysicsArticulationRootAPI"]) {
 
 
 def _mimic_signatures(model):
-    labels = list(model.joint_label)
-    follower = model.constraint_mimic_joint0.numpy()
-    leader = model.constraint_mimic_joint1.numpy()
-    coef0 = model.constraint_mimic_coef0.numpy()
-    coef1 = model.constraint_mimic_coef1.numpy()
-    enabled = model.constraint_mimic_enabled.numpy()
-    return [
-        (labels[int(follower[i])], labels[int(leader[i])], float(coef0[i]), float(coef1[i]), bool(enabled[i]))
-        for i in range(model.constraint_mimic_count)
-    ]
+    return dh.mimic_signatures(dh._model_arrays(model))
 
 
-def _reference_mimic_signatures(model):
-    labels = list(model["joint_label"])
-    follower = model["constraint_mimic_joint0"]
-    leader = model["constraint_mimic_joint1"]
-    coef0 = model["constraint_mimic_coef0"]
-    coef1 = model["constraint_mimic_coef1"]
-    enabled = model["constraint_mimic_enabled"]
-    return [
-        (labels[int(follower[i])], labels[int(leader[i])], float(coef0[i]), float(coef1[i]), bool(enabled[i]))
-        for i in range(len(follower))
-    ]
+@pytest.mark.parametrize("solver_name", ["mujoco", "featherstone"])
+@pytest.mark.parametrize("rotational", [True, False])
+def test_imported_mimic_is_enforced_by_solver(solver_name, rotational):
+    if solver_name == "featherstone" and not hasattr(newton.ModelBuilder, "set_joint_mimic"):
+        pytest.skip("Newton 1.6 Featherstone does not support mimic constraints")
+    usda = MIMIC_SCENE.replace(
+        '(prepend apiSchemas = ["PhysicsRigidBodyAPI"]) {}',
+        '(prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]) {'
+        ' float physics:mass = 1\n float3 physics:diagonalInertia = (1, 1, 1)\n }',
+    )
+    if not rotational:
+        usda = usda.replace("PhysicsRevoluteJoint", "PhysicsPrismaticJoint")
+    with ovstage.Stage("solver-mimic") as stage:
+        population.open_usd_from_string(stage, usda, ordinal=1, domains=PopulationDomain.ALL)
+        stage.advance_write_floor(ordinal=1).wait()
+        builder = newton.ModelBuilder(gravity=(0.0, 0.0, 0.0))
+        if solver_name == "mujoco":
+            pytest.importorskip("mujoco")
+            newton.solvers.SolverMuJoCo.register_custom_attributes(builder)
+        ovnewton.add_ovstage(builder, stage)
+        model = builder.finalize()
+    leader = model.joint_label.index("/World/Leader")
+    follower = model.joint_label.index("/World/Follower")
+    starts = model.joint_q_start.numpy()
+    q = model.joint_q.numpy()
+    q[starts[leader]], q[starts[follower]] = 0.35, 0.8
+    model.joint_q.assign(q)
+    state, next_state = model.state(), model.state()
+    newton.eval_fk(model, model.joint_q, model.joint_qd, state)
+    solver = (
+        newton.solvers.SolverMuJoCo(model, use_mujoco_cpu=True)
+        if solver_name == "mujoco" else newton.solvers.SolverFeatherstone(model)
+    )
+    for _ in range(120):
+        solver.step(state, next_state, None, None, 1.0 / 240.0)
+        state, next_state = next_state, state
+    result = state.joint_q.numpy()
+    offset = np.deg2rad(0.5) if rotational else 0.5
+    assert result[starts[follower]] == pytest.approx(offset - 2 * result[starts[leader]], abs=2e-3)
+
+
+@pytest.mark.skipif(
+    not hasattr(newton.ModelBuilder, "set_joint_mimic"), reason="Newton 1.6 lacks joint mimic validation"
+)
+def test_newton_joint_mimic_rejects_self_reference():
+    usda = MIMIC_SCENE.replace("rel newton:mimicJoint = </World/Leader>", "rel newton:mimicJoint = </World/Follower>")
+    with pytest.raises(ovnewton.InvalidPhysicsError, match="/World/Follower:.*cannot mimic itself"):
+        _ovstage_model_from_string(usda, "self-mimic")
 
 
 def test_newton_mimic_matches_add_usd(tmp_path):
@@ -482,7 +539,64 @@ def test_newton_mimic_matches_add_usd(tmp_path):
     ref = dh.reference_model(str(asset))
     model = _ovstage_model(str(asset), "newton-mimic")
 
-    assert _mimic_signatures(model) == _reference_mimic_signatures(ref)
+    assert _mimic_signatures(model) == dh.mimic_signatures(ref)
+
+
+def _merged_mimic_scene(merged_joints):
+    extra_joints = ""
+    for joint in merged_joints:
+        parent = "Root" if joint == "Leader" else "LeaderBody"
+        extra_joints += f'''
+    def PhysicsPrismaticJoint "{joint}Linear" {{
+        rel physics:body0 = </World/{parent}>
+        rel physics:body1 = </World/{joint}Body>
+    }}
+'''
+    return MIMIC_SCENE.rsplit("}", 1)[0] + extra_joints + "}\n"
+
+
+@pytest.mark.parametrize("merged_joints", [("Follower",), ("Leader",), ("Follower", "Leader")])
+def test_mimic_rejects_merged_joint_axes(merged_joints):
+    usda = _merged_mimic_scene(merged_joints)
+    role = merged_joints[0].lower()
+    with ovstage.Stage("merged-mimic") as stage:
+        population.open_usd_from_string(stage, usda, ordinal=1, domains=PopulationDomain.ALL)
+        stage.advance_write_floor(ordinal=1).wait()
+        builder = newton.ModelBuilder()
+        with pytest.raises(
+            UnsupportedPhysicsError,
+            match=(
+                rf"NewtonMimicAPI at /World/Follower: {role} joint /World/{merged_joints[0]} .*merged"
+                r".*Newton's mimic APIs cannot target individual source axes"
+            ),
+        ):
+            ovnewton.add_ovstage(builder, stage)
+
+
+def test_disabled_mimic_allows_merged_joint_axes():
+    usda = _merged_mimic_scene(("Follower", "Leader")).replace(
+        "        rel newton:mimicJoint = </World/Leader>\n",
+        "        bool newton:mimicEnabled = false\n",
+    )
+    with ovstage.Stage("disabled-merged-mimic") as stage:
+        population.open_usd_from_string(stage, usda, ordinal=1, domains=PopulationDomain.ALL)
+        stage.advance_write_floor(ordinal=1).wait()
+        builder = newton.ModelBuilder()
+        ovnewton.add_ovstage(builder, stage)
+        model = builder.finalize()
+    for joint in ("Follower", "Leader"):
+        assert model.joint_type.numpy()[model.joint_label.index(f"/World/{joint}")] == newton.JointType.D6
+    assert _mimic_signatures(model) == []
+
+
+def test_newton_prismatic_mimic_matches_add_usd(tmp_path):
+    usda = MIMIC_SCENE.replace('def PhysicsRevoluteJoint "Follower"', 'def PhysicsPrismaticJoint "Follower"')
+    asset = tmp_path / "prismatic-mimic.usda"
+    asset.write_text(usda, encoding="utf-8")
+    ref = dh.reference_model(str(asset))
+    model = _ovstage_model(str(asset), "newton-prismatic-mimic")
+
+    assert _mimic_signatures(model) == dh.mimic_signatures(ref)
 
 
 def test_newton_mimic_schema_defaults_match_add_usd(tmp_path):
@@ -494,7 +608,7 @@ def test_newton_mimic_schema_defaults_match_add_usd(tmp_path):
     ref = dh.reference_model(str(asset))
     model = _ovstage_model(str(asset), "newton-mimic-defaults")
 
-    assert _mimic_signatures(model) == _reference_mimic_signatures(ref)
+    assert _mimic_signatures(model) == dh.mimic_signatures(ref)
 
 
 def test_multiple_newton_mimics_match_add_usd_by_identity(tmp_path):
@@ -521,7 +635,7 @@ def test_multiple_newton_mimics_match_add_usd_by_identity(tmp_path):
     ref = dh.reference_model(str(asset))
     model = _ovstage_model(str(asset), "multiple-newton-mimics")
 
-    assert set(_mimic_signatures(model)) == set(_reference_mimic_signatures(ref))
+    assert set(_mimic_signatures(model)) == set(dh.mimic_signatures(ref))
 
 
 def test_newton_mimic_rejects_missing_target():
@@ -536,7 +650,7 @@ def test_disabled_newton_mimic_needs_no_target():
         "        bool newton:mimicEnabled = false\n",
     )
     model = _ovstage_model_from_string(usda, "newton-mimic-disabled")
-    assert model.constraint_mimic_count == 0
+    assert _mimic_signatures(model) == []
 
 
 @pytest.mark.parametrize(
@@ -912,7 +1026,8 @@ def test_invalid_mesh_topology_fails():
         _build._mesh_geometry(collider)
 
 
-def test_distance_joint_matches_add_usd(tmp_path):
+@pytest.mark.parametrize("bounds", [(0.25, 1.5), (0.0, 1.5), (-1.0, 1.5), (0.25, -1.0), (None, None)])
+def test_distance_joint_matches_add_usd(tmp_path, bounds):
     asset = tmp_path / "distance-joint.usda"
     asset.write_text(
         """#usda 1.0
@@ -926,11 +1041,17 @@ def Xform "World" (prepend apiSchemas = ["PhysicsArticulationRootAPI"]) {
     def PhysicsDistanceJoint "Distance" {
         rel physics:body0 = </World/Parent>
         rel physics:body1 = </World/Child>
-        float physics:minDistance = 0.25
-        float physics:maxDistance = 1.5
+        __BOUNDS__
     }
 }
-""",
+""".replace(
+            "__BOUNDS__",
+            "\n".join(
+                f"float physics:{name} = {value}"
+                for name, value in zip(("minDistance", "maxDistance"), bounds)
+                if value is not None
+            ),
+        ),
         encoding="utf-8",
     )
     ref = dh.reference_model(str(asset))
@@ -1094,7 +1215,7 @@ def test_dynamic_and_static_cones_match_add_usd(tmp_path):
     metersPerUnit = 1
     upAxis = "Z"
 )
-def Material "Material" (prepend apiSchemas = ["NewtonMaterialAPI"]) {
+def Material "Material" (prepend apiSchemas = ["PhysicsMaterialAPI", "NewtonMaterialAPI"]) {
     float physics:density = 500
     float physics:dynamicFriction = 0.3
     float physics:staticFriction = 0.4
@@ -1655,7 +1776,7 @@ def Xform "MeshBody" (prepend apiSchemas = ["PhysicsRigidBodyAPI"]) {
         float newton:sdfNarrowBandInner = -0.02
         float newton:sdfNarrowBandOuter = 0.03
         token newton:sdfTextureFormat = "uint8"
-        float newton:sdfPadding = 0.04
+        float newton:sdfPadding = 0.08
         bool newton:hydroelasticEnabled = true
         float newton:hydroelasticStiffness = 1e7
         float newton:contactGap = 0.07
@@ -1720,7 +1841,7 @@ def Xform "GapBody" (prepend apiSchemas = ["PhysicsRigidBodyAPI"]) {
     assert captured["target_voxel_size"][mesh] is None
     np.testing.assert_allclose(captured["narrow_band_range"][mesh], (-0.02, 0.03))
     assert captured["texture_format"][mesh] == "uint8"
-    assert captured["padding"][mesh] == pytest.approx(0.04)
+    assert captured["padding"][mesh] == pytest.approx(0.08)
     assert captured["flags"][mesh] & newton.ShapeFlags.HYDROELASTIC
     assert captured["kh"][mesh] == pytest.approx(1e7)
 
@@ -1743,7 +1864,7 @@ def test_bound_physics_material_matches_add_usd(tmp_path):
     metersPerUnit = 1
     upAxis = "Z"
 )
-def Material "Material" (prepend apiSchemas = ["NewtonMaterialAPI"]) {
+def Material "Material" (prepend apiSchemas = ["PhysicsMaterialAPI", "NewtonMaterialAPI"]) {
     float physics:density = 500
     float physics:dynamicFriction = 0.3
     float physics:staticFriction = 0.4
@@ -1800,18 +1921,18 @@ def test_newton_contact_material_matches_add_usd(tmp_path):
     metersPerUnit = 1
     upAxis = "Z"
 )
-def Material "All" (prepend apiSchemas = ["NewtonMaterialAPI"]) {
+def Material "All" (prepend apiSchemas = ["PhysicsMaterialAPI", "NewtonMaterialAPI"]) {
     float newton:contactStiffness = 5000
     float newton:contactDamping = 200
     float newton:contactFrictionGain = 800
     float newton:contactAdhesion = 0.01
 }
-def Material "Partial" (prepend apiSchemas = ["NewtonMaterialAPI"]) {
+def Material "Partial" (prepend apiSchemas = ["PhysicsMaterialAPI", "NewtonMaterialAPI"]) {
     float newton:contactStiffness = 3000
     float newton:contactDamping = 150
 }
-def Material "Defaults" (prepend apiSchemas = ["NewtonMaterialAPI"]) {}
-def Material "DisabledAdhesion" (prepend apiSchemas = ["NewtonMaterialAPI"]) {
+def Material "Defaults" (prepend apiSchemas = ["PhysicsMaterialAPI", "NewtonMaterialAPI"]) {}
+def Material "DisabledAdhesion" (prepend apiSchemas = ["PhysicsMaterialAPI", "NewtonMaterialAPI"]) {
     float newton:contactAdhesion = -1
 }
 def Material "PhysicsOnly" (prepend apiSchemas = ["PhysicsMaterialAPI"]) {}
@@ -2270,6 +2391,63 @@ def Xform "Body" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollision
     _binding_from_string(usda, "collision-container-policy", check)
 
 
+def test_logging_configuration_remains_application_owned(import_log):
+    usda = """#usda 1.0
+def Xform "Body" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI"]) {
+    def Cube "Collider" (prepend apiSchemas = ["PhysicsCollisionAPI"]) {}
+}
+"""
+    logger = logging.getLogger("ovnewton")
+    configuration = (tuple(logger.handlers), tuple(logger.filters), logger.level, logger.disabled, logger.propagate)
+
+    _binding_from_string(usda, "application-owned-logging", lambda binding: None)
+
+    assert (
+        tuple(logger.handlers),
+        tuple(logger.filters),
+        logger.level,
+        logger.disabled,
+        logger.propagate,
+    ) == configuration
+
+
+def test_application_logging_level_controls_diagnostics(caplog):
+    usda = """#usda 1.0
+def Xform "Body" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI"]) {
+    def Cube "Collider" (prepend apiSchemas = ["PhysicsCollisionAPI"]) {}
+}
+"""
+    caplog.set_level(logging.ERROR, logger="ovnewton")
+
+    _binding_from_string(usda, "application-logging-level", lambda binding: None)
+
+    assert not _diagnostics(caplog)
+
+
+def test_application_logging_filter_controls_diagnostics(import_log):
+    usda = """#usda 1.0
+def Cube "Body" (
+    prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI"]
+) {
+    bool physics:rigidBodyEnabled = false
+    bool physics:startsAsleep = true
+}
+"""
+
+    class DiagnosticFilter(logging.Filter):
+        def filter(self, record):
+            return getattr(record, "diagnostic_code", None) == "starts-asleep-ignored"
+
+    diagnostic_filter = DiagnosticFilter()
+    import_log.handler.addFilter(diagnostic_filter)
+    try:
+        _binding_from_string(usda, "application-filtered-logging", lambda binding: None)
+    finally:
+        import_log.handler.removeFilter(diagnostic_filter)
+
+    assert _diagnostic_pairs(import_log) == [("starts-asleep-ignored", "/Body")]
+
+
 def test_disabled_joint_is_omitted_with_diagnostic(import_log):
     usda = """#usda 1.0
 def Xform "Body" (prepend apiSchemas = ["PhysicsRigidBodyAPI"]) {}
@@ -2455,6 +2633,238 @@ def Xform "Robot" (prepend apiSchemas = ["PhysicsArticulationRootAPI"]) {
     _binding_from_string(usda, "excluded-loop-joint", check)
 
 
+@pytest.mark.parametrize(
+    "groups,blocked",
+    [
+        (
+            '''def PhysicsCollisionGroup "GA" {
+    rel collection:colliders:includes = </A>
+}
+def PhysicsCollisionGroup "GB" {
+    rel collection:colliders:includes = </B>
+}''',
+            set(),
+        ),
+        (
+            '''def PhysicsCollisionGroup "GA" {
+    rel collection:colliders:includes = </A>
+    rel physics:filteredGroups = </GB>
+}
+def PhysicsCollisionGroup "GB" {
+    rel collection:colliders:includes = </B>
+}
+def PhysicsCollisionGroup "GC" {
+    rel collection:colliders:includes = </C>
+}''',
+            {("/A", "/B")},
+        ),
+        (
+            '''def PhysicsCollisionGroup "GA" {
+    rel collection:colliders:includes = [</A>, </C>]
+    rel physics:filteredGroups = [</GA>, </GB>]
+}
+def PhysicsCollisionGroup "GB" {
+    rel collection:colliders:includes = </B>
+}
+def PhysicsCollisionGroup "GD" {
+    rel collection:colliders:includes = </D>
+    bool physics:invertFilteredGroups = true
+    rel physics:filteredGroups = </GB>
+}''',
+            {("/A", "/B"), ("/A", "/C"), ("/B", "/C"), ("/A", "/D"), ("/C", "/D")},
+        ),
+        (
+            '''def PhysicsCollisionGroup "GA" {
+    rel collection:colliders:includes = </A>
+    bool physics:invertFilteredGroups = true
+    rel physics:filteredGroups = </GB>
+}
+def PhysicsCollisionGroup "GB" {
+    rel collection:colliders:includes = </B>
+}''',
+            {("/A", "/C"), ("/A", "/D")},
+        ),
+        (
+            '''def PhysicsCollisionGroup "GA" {
+    rel collection:colliders:includes = </A>
+    string physics:mergeGroup = "shared"
+    rel physics:filteredGroups = </GC>
+}
+def PhysicsCollisionGroup "GB" {
+    rel collection:colliders:includes = </B>
+    string physics:mergeGroup = "shared"
+}
+def PhysicsCollisionGroup "GC" {
+    rel collection:colliders:includes = </C>
+}''',
+            {("/A", "/C"), ("/B", "/C")},
+        ),
+        (
+            '''def PhysicsCollisionGroup "GA" {
+    rel collection:colliders:includes = </A>
+    string physics:mergeGroup = "shared"
+    bool physics:invertFilteredGroups = true
+    rel physics:filteredGroups = [</GA>, </GC>]
+}
+def PhysicsCollisionGroup "GB" {
+    rel collection:colliders:includes = </B>
+    string physics:mergeGroup = "shared"
+}
+def PhysicsCollisionGroup "GC" {
+    rel collection:colliders:includes = </C>
+}''',
+            {("/A", "/D"), ("/B", "/D")},
+        ),
+        (
+            '''def PhysicsCollisionGroup "GA" {
+    rel collection:colliders:includes = [</A>, </B>]
+}
+def PhysicsCollisionGroup "GB" {
+    rel collection:colliders:includes = </A>
+    rel physics:filteredGroups = </GC>
+}
+def PhysicsCollisionGroup "GC" {
+    rel collection:colliders:includes = </C>
+}''',
+            {("/A", "/C")},
+        ),
+        (
+            '''def PhysicsCollisionGroup "GA" {
+    rel collection:colliders:includes = </A>
+    rel physics:filteredGroups = </GB>
+}
+def PhysicsCollisionGroup "GB" {
+    rel collection:colliders:includes = </B>
+}
+def Cube "E" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI", "PhysicsFilteredPairsAPI"]) {
+    rel physics:filteredPairs = </C>
+}''',
+            {("/A", "/B"), ("/C", "/E")},
+        ),
+        (
+            '''def PhysicsCollisionGroup "Unused" {
+    bool physics:invertFilteredGroups = true
+}''',
+            set(),
+        ),
+    ],
+    ids=[
+        "unfiltered", "selective", "self-and-inverted", "ungrouped", "merged", "merged-inverted",
+        "multiple", "pairs", "unused",
+    ],
+)
+def test_collision_groups_preserve_usd_filter_rules(groups, blocked):
+    # Test USD semantics directly: Newton 1.6's importer isolated all distinct
+    # groups, so it is not a valid oracle for these filtering rules.
+    usda = '#usda 1.0\n' + '\n'.join(
+        f'def Cube "{name}" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI"]) {{}}'
+        for name in "ABCD"
+    ) + '\n' + groups
+    model = _ovstage_model_from_string(usda, "collision-group-rules")
+    assert set(model.shape_collision_group.numpy()) == {newton.ModelBuilder().default_shape_cfg.collision_group}
+    labels = model.shape_label
+    actual = {tuple(sorted((labels[a], labels[b]))) for a, b in model.shape_collision_filter_pairs}
+    assert actual == blocked
+
+
+@pytest.mark.parametrize("default_group", [0, -1, 5])
+def test_collision_groups_preserve_builder_default(default_group):
+    usda = '''#usda 1.0
+def Cube "A" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI"]) {}
+def PhysicsCollisionGroup "GA" {
+    rel collection:colliders:includes = </A>
+}
+'''
+    with ovstage.Stage("collision-group-default") as stage, ovstage.PathDictionary(stage) as pd:
+        population.open_usd_from_string(stage, usda, ordinal=1, domains=PopulationDomain.ALL)
+        stage.advance_write_floor(ordinal=1).wait()
+        builder = newton.ModelBuilder()
+        builder.default_shape_cfg.collision_group = default_group
+        _build.add_ovstage(builder, stage, pd)
+        assert builder.shape_collision_group == [default_group]
+
+
+@pytest.mark.parametrize("filtered", [False, True])
+def test_collision_groups_control_contact_generation(filtered):
+    filter_rule = "rel physics:filteredGroups = </GB>" if filtered else ""
+    usda = f'''#usda 1.0
+def Sphere "A" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI"]) {{}}
+def Sphere "B" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI"]) {{
+    double3 xformOp:translate = (1, 0, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+}}
+def PhysicsCollisionGroup "GA" {{
+    rel collection:colliders:includes = </A>
+    {filter_rule}
+}}
+def PhysicsCollisionGroup "GB" {{
+    rel collection:colliders:includes = </B>
+}}
+'''
+    model = _ovstage_model_from_string(usda, "collision-group-contacts")
+    pipeline = newton.CollisionPipeline(model)
+    contacts = pipeline.contacts()
+    pipeline.collide(model.state(), contacts)
+    assert (int(contacts.rigid_contact_count.numpy()[0]) > 0) == (not filtered)
+
+
+@pytest.mark.parametrize("filtered", [False, True])
+def test_collision_groups_filter_all_convex_parts(filtered):
+    filter_rule = "rel physics:filteredGroups = </GB>" if filtered else ""
+    usda = f'''#usda 1.0
+def Mesh "A" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI", "PhysicsMeshCollisionAPI"]) {{
+    uniform token subdivisionScheme = "none"
+    uniform token physics:approximation = "convexDecomposition"
+    point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1),
+                        (3, 0, 0), (4, 0, 0), (3, 1, 0), (3, 0, 1)]
+    int[] faceVertexCounts = [3, 3, 3, 3, 3, 3, 3, 3]
+    int[] faceVertexIndices = [0, 2, 1, 0, 1, 3, 0, 3, 2, 1, 2, 3,
+                              4, 6, 5, 4, 5, 7, 4, 7, 6, 5, 6, 7]
+}}
+def Sphere "B" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI"]) {{}}
+def PhysicsCollisionGroup "GA" {{
+    rel collection:colliders:includes = </A>
+    {filter_rule}
+}}
+def PhysicsCollisionGroup "GB" {{
+    rel collection:colliders:includes = </B>
+}}
+'''
+    model = _ovstage_model_from_string(usda, "collision-group-convex-parts")
+    body = list(model.body_label).index("/A")
+    parts = np.flatnonzero(model.shape_body.numpy() == body)
+    # Two disconnected tetrahedra must produce multiple collision shapes.
+    assert len(parts) >= 2
+    target = list(model.shape_label).index("/B")
+    pairs = {tuple(sorted(pair)) for pair in model.shape_collision_filter_pairs}
+    for part in parts:
+        assert (tuple(sorted((int(part), target))) in pairs) == filtered
+
+
+def test_collision_groups_resolve_subtree_includes_and_excludes():
+    usda = '''#usda 1.0
+def Xform "Parent" {
+    def Cube "A" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI"]) {}
+    def Cube "B" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI"]) {}
+}
+def Cube "ParentSibling" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI"]) {}
+def Cube "C" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI"]) {}
+def PhysicsCollisionGroup "Group" {
+    rel collection:colliders:includes = </Parent>
+    rel collection:colliders:excludes = </Parent/B>
+    rel physics:filteredGroups = </Other>
+}
+def PhysicsCollisionGroup "Other" {
+    rel collection:colliders:includes = </C>
+}
+'''
+    model = _ovstage_model_from_string(usda, "collision-group-subtree")
+    labels = model.shape_label
+    assert {tuple(sorted((labels[a], labels[b]))) for a, b in model.shape_collision_filter_pairs} == {
+        ("/C", "/Parent/A")
+    }
+
+
 def test_collision_groups_match_add_usd(tmp_path):
     asset = tmp_path / "collision-groups.usda"
     asset.write_text(
@@ -2491,21 +2901,23 @@ def Xform "World" {
         def Cube "A" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI"]) {}
     }
     def Cube "B" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI"]) {}
+    def Cube "C" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI"]) {}
     def PhysicsCollisionGroup "Group" {
         uniform token collection:colliders:expansionRule = "explicitOnly"
         rel collection:colliders:includes = [</World/ParentA>, </World/B>]
+        rel physics:filteredGroups = </World/Other>
+    }
+    def PhysicsCollisionGroup "Other" {
+        rel collection:colliders:includes = </World/C>
     }
 }
 """
     model = _ovstage_model_from_string(usda, "collision-group-explicit-only")
-    groups = {
-        label: int(model.shape_collision_group.numpy()[index])
-        for index, label in enumerate(model.shape_label)
-    }
-    if groups["/World/ParentA/A"] == groups["/World/B"]:
+    labels = model.shape_label
+    pairs = {tuple(sorted((labels[a], labels[b]))) for a, b in model.shape_collision_filter_pairs}
+    if pairs == {("/World/B", "/World/C"), ("/World/C", "/World/ParentA/A")}:
         pytest.xfail("ovpopulation does not provide resolved collision-group collection membership")
-    assert groups["/World/ParentA/A"] == 0
-    assert groups["/World/B"] > 0
+    assert pairs == {("/World/B", "/World/C")}
 
 
 def test_filtered_pairs_match_add_usd(tmp_path):

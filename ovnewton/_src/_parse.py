@@ -88,18 +88,26 @@ class _JointDesc:
     dofs: Tuple[_DofDesc, ...]
     collision_enabled: bool = False
     excluded_from_articulation: bool = False
+    min_distance: float = -1.0
+    max_distance: float = -1.0
 
 
 @dataclass(frozen=True)
 class _Hierarchy:
     parents: Dict[str, Optional[str]]
+    incomplete_parents: frozenset[str] = frozenset()
+
+    def _parent(self, path: str) -> Optional[str]:
+        if path in self.incomplete_parents:
+            raise OvstageContractError(f"{USD_PARENT!r} is missing for nested prim {path}")
+        return self.parents[path]
 
     def ancestors(self, path: str, *, include_self: bool = False) -> Tuple[str, ...]:
         if path not in self.parents:
             raise OvstageContractError(f"prim is absent from the populated hierarchy: {path}")
         lineage: List[str] = []
         seen: set[str] = set()
-        node = path if include_self else self.parents[path]
+        node = path if include_self else self._parent(path)
         while node is not None:
             if node in seen:
                 raise OvstageContractError(f"populated hierarchy contains a cycle at {node}")
@@ -109,7 +117,7 @@ class _Hierarchy:
                 break
             if node not in self.parents:
                 raise OvstageContractError(f"populated hierarchy references an unknown parent: {node}")
-            node = self.parents[node]
+            node = self._parent(node)
         return tuple(lineage)
 
     def contains(self, root: str, path: str) -> bool:
@@ -159,22 +167,24 @@ _NEWTON_JOINT_API_FIELDS = {
     "broadcast_limit_damping": NEWTON_JOINT_LIMIT_DAMPING,
 }
 _AXIS_VECTORS = {"X": (1.0, 0.0, 0.0), "Y": (0.0, 1.0, 0.0), "Z": (0.0, 0.0, 1.0)}
-_STAGE_INFO_PATH = "/__ovstage_population_stage_info__"
+_STAGE_METADATA_PATH = "/"
+_STAGE_METERS_PER_UNIT = "usd-metadata:metersPerUnit"
+_STAGE_UP_AXIS = "usd-metadata:upAxis"
 _USD_GENERATED_PROTOTYPE_PREFIX = "__Prototype_"
 
 
 def read_stage_units(stage: Any, pd: Any, ordinal: int) -> Tuple[float, str]:
-    """Return population's stage ``metersPerUnit`` and ``upAxis`` values."""
-    with _stage._path_list_query(stage, pd, [_STAGE_INFO_PATH]) as query:
-        columns = _stage.read_columns(stage, pd, query, ["metersPerUnit", "upAxis"], ordinal)
-    meters_rows = columns["metersPerUnit"]
-    up_rows = columns["upAxis"]
+    """Return the populated stage ``metersPerUnit`` and ``upAxis`` metadata."""
+    with _stage._path_list_query(stage, pd, [_STAGE_METADATA_PATH]) as query:
+        columns = _stage.read_columns(stage, pd, query, [_STAGE_METERS_PER_UNIT, _STAGE_UP_AXIS], ordinal)
+    meters_rows = columns[_STAGE_METERS_PER_UNIT]
+    up_rows = columns[_STAGE_UP_AXIS]
     meters = meters_rows.get(0)
     up = _token_value(pd, up_rows.get(0))
     if meters is None or not len(meters) or not np.isfinite(meters[0]) or float(meters[0]) <= 0.0:
-        raise OvstageContractError("population stage info has no valid metersPerUnit")
+        raise OvstageContractError("population stage metadata has no valid metersPerUnit")
     if up not in ("Y", "Z"):
-        raise OvstageContractError(f"population stage info has invalid upAxis {up!r}")
+        raise OvstageContractError(f"population stage metadata has invalid upAxis {up!r}")
     return float(meters[0]), up
 
 
@@ -253,14 +263,12 @@ def read_hierarchy(stage: Any, pd: Any, ordinal: int) -> _Hierarchy:
         for path in path_values.keys() - parent_values.keys()
         if path.count("/") > 1 and not _is_generated_prototype_path(path)
     )
-    if missing_nested:
-        raise OvstageContractError(f"{USD_PARENT!r} is missing for nested prim {missing_nested[0]}")
     parents = {path: parent_values.get(path) or None for path in path_values}
     known = set(parents)
     unknown = sorted({parent for parent in parents.values() if parent and parent not in known})
     if unknown:
         raise OvstageContractError(f"{USD_PARENT!r} references an unknown prim: {unknown[0]}")
-    return _Hierarchy(parents)
+    return _Hierarchy(parents, frozenset(missing_nested))
 
 
 def _token_value(pd: Any, row: Optional[np.ndarray]) -> Optional[str]:
@@ -533,7 +541,7 @@ def read_mimics(stage: Any, pd: Any, ordinal: int) -> List[Dict[str, Any]]:
             stage,
             pd,
             query,
-            ("newton:mimicEnabled", "newton:mimicJoint", "newton:mimicCoef0", "newton:mimicCoef1"),
+            (USD_PRIM_TYPE, "newton:mimicEnabled", "newton:mimicJoint", "newton:mimicCoef0", "newton:mimicCoef1"),
             ordinal,
             ragged=("newton:mimicJoint",),
         )
@@ -544,6 +552,9 @@ def read_mimics(stage: Any, pd: Any, ordinal: int) -> List[Dict[str, Any]]:
         enabled = bool(enabled_row[0]) if enabled_row is not None and len(enabled_row) else True
         if not enabled:
             continue
+        prim_type = _token_value(pd, columns[USD_PRIM_TYPE].get(i))
+        if prim_type is None:
+            raise OvstageContractError(f"prim has no readable {USD_PRIM_TYPE!r} value: {path}")
         targets = columns["newton:mimicJoint"].get(i)
         if targets is None or not len(targets):
             raise InvalidPhysicsError(f"NewtonMimicAPI at {path} has no newton:mimicJoint target")
@@ -561,13 +572,14 @@ def read_mimics(stage: Any, pd: Any, ordinal: int) -> List[Dict[str, Any]]:
                 "leader": pd.path_to_string(int(targets[0])),
                 "coef0": coef0,
                 "coef1": coef1,
+                "rotational": prim_type == "PhysicsRevoluteJoint",
             }
         )
     return mimics
 
 
 def read_collision_groups(stage: Any, pd: Any, ordinal: int) -> List[Dict[str, Any]]:
-    """Return collision-group collection membership from the Kit population surface."""
+    """Return collision-group membership and filter rules from the population surface."""
     paths = _type_paths(stage, pd, "PhysicsCollisionGroup", ordinal)
     if not paths:
         return []
@@ -576,20 +588,32 @@ def read_collision_groups(stage: Any, pd: Any, ordinal: int) -> List[Dict[str, A
             stage,
             pd,
             query,
-            ["collection:colliders:includes", "collection:colliders:excludes"],
+            [
+                "collection:colliders:includes",
+                "collection:colliders:excludes",
+                "physics:filteredGroups",
+                "physics:invertFilteredGroups",
+                "physics:mergeGroup",
+            ],
             ordinal,
-            ragged=["collection:colliders:includes", "collection:colliders:excludes"],
+            ragged=["collection:colliders:includes", "collection:colliders:excludes", "physics:filteredGroups"],
         )
-    includes = {i: [int(x) for x in row.tolist()] for i, row in columns["collection:colliders:includes"].items()}
-    excludes = {i: [int(x) for x in row.tolist()] for i, row in columns["collection:colliders:excludes"].items()}
 
-    def targets(rows: Dict[int, List[int]], index: int) -> List[str]:
-        return [pd.path_to_string(target) for target in rows.get(index, [])]
+    def targets(attribute: str, index: int) -> List[str]:
+        return [pd.path_to_string(int(target)) for target in columns[attribute].get(index, [])]
 
-    return [
-        {"path": path, "includes": targets(includes, i), "excludes": targets(excludes, i)}
-        for i, path in enumerate(paths)
-    ]
+    groups = []
+    for i, path in enumerate(paths):
+        inverted = columns["physics:invertFilteredGroups"].get(i)
+        groups.append({
+            "path": path,
+            "includes": targets("collection:colliders:includes", i),
+            "excludes": targets("collection:colliders:excludes", i),
+            "filtered_groups": targets("physics:filteredGroups", i),
+            "inverted": bool(inverted[0]) if inverted is not None and len(inverted) else False,
+            "merge_group": _token_value(pd, columns["physics:mergeGroup"].get(i)),
+        })
+    return groups
 
 
 def read_filtered_pairs(stage: Any, pd: Any, ordinal: int) -> List[Tuple[str, str]]:
@@ -1008,6 +1032,8 @@ def _read_joints_of_type(
             "physics:breakForce",
             "physics:breakTorque",
         ]
+        if jtype == "PhysicsDistanceJoint":
+            fixed_attrs.extend(("physics:minDistance", "physics:maxDistance"))
         if single_dof:
             fixed_attrs.extend(
                 (
@@ -1164,6 +1190,8 @@ def _read_joints_of_type(
                         dofs=tuple(dofs),
                         collision_enabled=collisions,
                         excluded_from_articulation=excluded_from_articulation,
+                        min_distance=_row_scalar(columns.get("physics:minDistance", {}), i, -1.0),
+                        max_distance=_row_scalar(columns.get("physics:maxDistance", {}), i, -1.0),
                     ),
                 )
             )

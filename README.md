@@ -14,10 +14,9 @@ Omniverse library ecosystem.
 
 ## Overview
 
-`ovnewton` builds a Newton model from a USD scene populated into ovstage. The
-application owns the Newton solver and simulation loop. It can publish
-simulation state back to the stage, apply sealed stage updates to Newton state
-and control, or read selected Newton-native state without publishing.
+`ovnewton` builds Newton models from scenes populated in ovstage. The application owns the Newton solver and simulation loop. A binding publishes simulation state to the stage, applies sealed stage updates to Newton, or exposes selected Newton outputs without publishing.
+
+Use `add_ovstage()` to populate an application-owned builder, or `attach_ovstage(stage)` to create and finalize the model automatically.
 
 ```text
 USD ──ovpopulation──▶ ovstage ──ovnewton──▶ Newton
@@ -29,18 +28,17 @@ Newton does not parse the USD file in this workflow.
 
 ## Requirements
 
-- Python 3.10 or newer
-- Linux on x86-64
-- ovstage 0.1.0.346039 or newer
-- NumPy 1.26.0 or newer
-- SciPy 1.11.2 or newer
-- An NVIDIA GPU with CUDA is recommended; supported non-rendering workflows can
-  also run on the CPU
+- Python 3.11 through 3.14
+- Linux on x86-64 and aarch64 for non-rendering workflows
+- CPU or NVIDIA CUDA GPU for supported non-rendering workflows
+- A compatible NVIDIA RTX-capable GPU and supported driver for OVRTX rendering, even when physics runs on the CPU
+
+Package installation resolves the required dependencies. Detailed version requirements are in the [support guide](https://github.com/NVIDIA-Omniverse/ovnewton/blob/main/docs/site/support.md).
 
 ## Installation
 
-After a public release is published, install `ovnewton` and its runtime
-dependencies from PyPI:
+Install the current public release of `ovnewton` and its runtime dependencies
+from PyPI:
 
 ```bash
 pip install ovnewton
@@ -52,17 +50,31 @@ Run the installed example without rendering:
 python -m ovnewton.examples.example_ovnewton_basic --device cpu --no-render
 ```
 
-The example loads the `scene_rigid_bodies.usda` scene included in the ovnewton wheel. Install the `examples` extra to render it with ovrtx:
+The example loads the `scene_rigid_bodies.usda` scene included in the ovnewton wheel. Install the `examples` extra for ovrtx rendering and MuJoCo-Warp:
 
 ```bash
 pip install "ovnewton[examples]"
 python -m ovnewton.examples.example_ovnewton_basic
 ```
 
+The same example can build the scene through ovnewton and advance it with the
+MuJoCo-Warp or VBD backend on CUDA or CPU:
+
+```bash
+python -m ovnewton.examples.example_ovnewton_basic --solver mujoco
+python -m ovnewton.examples.example_ovnewton_basic --solver vbd
+```
+
 The simulation runs on `cuda:0` by default. Pass `--device cpu` to simulate on the CPU. The wheel also includes a complete cartpole scene:
 
 ```bash
 python -m ovnewton.examples.example_ovnewton_basic --stage scene_cartpole
+```
+
+To watch several Ant robots from Newton's installed assets fall onto a ground plane:
+
+```bash
+python -m ovnewton.examples.example_ovnewton_robot
 ```
 
 ## Quickstart
@@ -77,6 +89,7 @@ from ovstage import PopulationDomain, population
 
 scene_path = "/path/to/scene.usd"
 
+ovnewton.register_usd_schemas()
 stage = ovstage.Stage()
 population.open_usd(
     stage,
@@ -86,17 +99,21 @@ population.open_usd(
 )
 stage.advance_write_floor(1).wait()
 
-binding = ovnewton.attach_ovstage(stage)
-model = binding.model
+builder = newton.ModelBuilder()
+import_result = ovnewton.add_ovstage(builder, stage)
+model = builder.finalize(skip_validation_joints=import_result.has_orphan_joints)
 solver = newton.solvers.SolverXPBD(model)
+binding = ovnewton.attach_ovstage(stage, model=model)
 state_0 = model.state()
 state_1 = model.state()
+newton.eval_fk(model, model.joint_q, model.joint_qd, state_0)
 control = model.control()
-contacts = model.contacts()
+collision_pipeline = newton.CollisionPipeline(model)
+contacts = collision_pipeline.contacts()
 
 dt = 1.0 / 60.0
 state_0.clear_forces()
-model.collide(state_0, contacts)
+collision_pipeline.collide(state_0, contacts)
 solver.step(state_0, state_1, control, contacts, dt)
 
 binding.update_to_ovstage(state_1, ordinal=2)
@@ -108,35 +125,15 @@ apply supported state and drive-target changes from the stage. Use
 `binding.query()` and `binding.read()` to expose selected read-only Newton state
 without publishing it.
 
-## Supported features
+See the [getting-started guide](https://github.com/NVIDIA-Omniverse/ovnewton/blob/main/docs/site/getting-started.md) for the full simulation loop and MuJoCo/VBD model preparation.
 
-`ovnewton` supports:
+## Supported features and limits
 
-- rigid bodies and articulations;
-- sphere, cube, capsule, cylinder, cone, and mesh colliders;
-- mass, inertia, center of mass, physics materials, and collision filtering;
-- revolute, prismatic, fixed, spherical, distance, and D6 joints;
-- initial body and joint state;
-- body state and single-axis joint state updates; and
-- selected read-only Newton output on CPU and CUDA.
+`ovnewton` supports rigid bodies, articulations, primitive and mesh colliders, physics materials, collision filtering, and a limited subset of surface-cloth inputs. Applications can synchronize state with ovstage and read selected Newton outputs on CPU or CUDA.
 
-Malformed data and unsupported physics that would materially change the model
-raise an error during attachment instead of creating an incorrect model.
+Physics instancing, Newton actuators, cables and volume deformables are not supported. Joint-state updates, material bindings and cloth inputs have additional restrictions; see the [support guide](https://github.com/NVIDIA-Omniverse/ovnewton/blob/main/docs/site/support.md) for the full list.
 
-## Known limitations
-
-- Native USD physics instances and physics `PointInstancer` content are
-  rejected.
-- Per-axis runtime state for D6 joints is not synchronized.
-- Inherited and collection-based material bindings have partial support.
-- Newton actuators, soft bodies, cables, cloth, and volumes are not available
-  because ovstage does not expose the required data.
-- Some recoverable inputs are ignored or normalized with a warning.
-
-ARM64 support is currently limited because Newton's `add_usd()` parity reference
-importer fails with OpenUSD 25.x.
-Attached OVRTX 0.4 rendering still requires a CPU relay for CUDA-origin transform
-updates.
+Malformed data and unsupported physics that would materially change the model raise an error. Recoverable import decisions use the standard `ovnewton` Python logger; see the [concepts guide](https://github.com/NVIDIA-Omniverse/ovnewton/blob/main/docs/site/concepts.md#diagnostics-and-observability) for details.
 
 ## License
 

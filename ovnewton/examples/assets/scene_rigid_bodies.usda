@@ -16,8 +16,20 @@
 # are laterally offset and dropped from a height so they topple into loose
 # piles rather than settling into perfect columns.
 
-def Xform "World"
+def Xform "World" (
+    prepend apiSchemas = ["MaterialBindingAPI"]
+)
 {
+    rel material:binding:physics = </World/ContactMaterial>
+
+    def Material "ContactMaterial" (
+        prepend apiSchemas = ["PhysicsMaterialAPI"]
+    )
+    {
+        float physics:staticFriction = 1
+        float physics:dynamicFriction = 1
+    }
+
     def PhysicsScene "PhysicsScene"
     {
         vector3f physics:gravityDirection = (0, 0, -1)

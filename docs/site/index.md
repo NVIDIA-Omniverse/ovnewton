@@ -10,7 +10,7 @@ SPDX-License-Identifier: Apache-2.0
 This site describes `ovnewton` {{ ovnewton_version }} from commit {{ ovnewton_commit }}.
 
 :::{warning}
-`ovnewton` is pre-release software. Its API and packaging may change before 1.0.
+`ovnewton` is experimental software. Its API and packaging may change before 1.0.
 :::
 
 `ovnewton` is a small, pure-Python library. It builds a `newton.Model` from a populated stage. Newton does not parse the USD file.

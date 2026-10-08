@@ -96,6 +96,32 @@ def Xform "BodyExtra" (prepend apiSchemas = ["PhysicsRigidBodyAPI"]) {}
     assert hierarchy.nearest("/Body/Collider", {"/Body"}) == "/Body"
 
 
+def test_unused_incomplete_hierarchy_branch_does_not_block_physics_traversal():
+    hierarchy = _parse._Hierarchy(
+        parents={
+            "/Body": None,
+            "/Body/Collider": "/Body",
+            "/Visuals/Looks/Material": None,
+        },
+        incomplete_parents=frozenset({"/Visuals/Looks/Material"}),
+    )
+
+    assert hierarchy.nearest("/Body/Collider", {"/Body"}) == "/Body"
+
+
+def test_incomplete_hierarchy_fails_when_consumed():
+    hierarchy = _parse._Hierarchy(
+        parents={"/Body": None, "/Body/Collider": None},
+        incomplete_parents=frozenset({"/Body/Collider"}),
+    )
+
+    with pytest.raises(
+        OvstageContractError,
+        match="'usd-parent' is missing for nested prim /Body/Collider",
+    ):
+        hierarchy.nearest("/Body/Collider", {"/Body"})
+
+
 def test_readable_prim_type_groups_materialized_paths():
     with ovstage.Stage("ovnewton-readable-prim-type") as stage, ovstage.PathDictionary(stage) as pd:
         population.open_usd_from_string(stage, COLLISION_GROUPS, ordinal=1, domains=PopulationDomain.ALL)

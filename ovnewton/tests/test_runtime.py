@@ -9,8 +9,10 @@ Newton's state/control arrays and the canonical USD physics columns instead of
 the PhysX descriptor/change-dispatch layer.
 """
 
+import gc
 import inspect
 import threading
+import weakref
 
 import newton
 import numpy as np
@@ -113,6 +115,33 @@ def PhysicsScene "Scene"
 {
     vector3f physics:gravityDirection = (0, 0, -1)
     float physics:gravityMagnitude = 9.81
+}
+"""
+
+
+NESTED_BODY = """#usda 1.0
+(
+    metersPerUnit = 1
+    upAxis = "Z"
+)
+
+def Xform "Parent"
+{
+    double3 xformOp:translate = (5, 0, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+
+    def Cube "Body" (
+        apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI", "PhysicsMassAPI"]
+    )
+    {
+        bool physics:collisionEnabled = 1
+        float physics:mass = 1
+        vector3f physics:velocity = (0, 0, 0)
+        vector3f physics:angularVelocity = (0, 0, 0)
+        double size = 1
+        double3 xformOp:translate = (2, 0, 0)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }
 }
 """
 
@@ -243,6 +272,17 @@ def test_runtime_configuration_arguments_are_keyword_only():
     assert from_stage["control"].default is inspect.Parameter.empty
 
 
+def test_runtime_ingress_keeps_composed_body_pose_below_transformed_parent():
+    with ovstage.Stage("runtime-nested-body") as stage:
+        _populate(stage, NESTED_BODY)
+        binding = ovnewton.attach_ovstage(stage)
+        state = binding.model.state()
+
+        assert state.body_q.numpy()[0, 0] == pytest.approx(7.0)
+        binding.update_from_ovstage(state, control=binding.model.control())
+        assert state.body_q.numpy()[0, 0] == pytest.approx(7.0)
+
+
 def test_ingress_uses_latest_sealed_payload_and_rejects_historical_read():
     with ovstage.Stage("runtime-snapshots") as stage:
         _populate(stage, FALLING_BODY)
@@ -362,7 +402,7 @@ def test_output_requires_body_velocity_before_writing():
             binding.update_to_ovstage(state, ordinal=2)
         stage.advance_write_floor(ordinal=2).wait()
         with _stage._path_list_query(stage, pd, binding.model.body_label) as query:
-            matrices = _stage.read_fixed(stage, pd, query, "omni:fabric:worldMatrix", ordinal=2)
+            matrices = _stage.read_fixed(stage, pd, query, "omni:xform", ordinal=2)
         translation, _, _ = _build._decode_pose(np.stack([matrices[i] for i in range(binding.model.body_count)]))
         assert translation[0, 0] == 0.0
 
@@ -382,7 +422,7 @@ def test_output_requires_joint_velocity_before_writing_body_state():
             binding.update_to_ovstage(state, ordinal=2)
         stage.advance_write_floor(ordinal=2).wait()
         with _stage._path_list_query(stage, pd, binding.model.body_label) as query:
-            matrices = _stage.read_fixed(stage, pd, query, "omni:fabric:worldMatrix", ordinal=2)
+            matrices = _stage.read_fixed(stage, pd, query, "omni:xform", ordinal=2)
         translation, _, _ = _build._decode_pose(np.stack([matrices[i] for i in range(binding.model.body_count)]))
         np.testing.assert_allclose(translation, original_body_q[:, :3])
 
@@ -525,7 +565,7 @@ def test_drive_mode_requires_only_its_active_target(stiffness, damping, mode, re
 
 
 def test_runtime_batches_reads_and_pipelines_writes():
-    with ovstage.Stage("runtime-operation-shape") as stage, ovstage.PathDictionary(stage):
+    with ovstage.Stage("runtime-operation-shape") as stage, ovstage.PathDictionary(stage) as pd:
         _populate(stage, DRIVEN_REVOLUTE)
         binding = ovnewton.attach_ovstage(stage)
 
@@ -560,9 +600,60 @@ def test_runtime_batches_reads_and_pipelines_writes():
         stage.write_attributes = tracked_write
         binding.update_to_ovstage(binding.model.state(), ordinal=2)
         assert events == ["enqueue"] * 2 + ["wait"] * 2
-        assert [len(batch) for batch in batches] == [3, 2]
+        assert [len(batch) for batch in batches] == [4, 2]
+        reset = batches[0][0]
+        assert reset.attribute == pd.intern_token("omni:resetXformStack")
+        assert int(reset.tensors.dtype.code) == int(ovstage.DLDataTypeCode.kDLBool)
+        assert int(reset.tensors.dtype.bits) == 8
+        assert int(reset.tensors.dtype.lanes) == 1
+        assert _runtime._tensor_device(reset.tensors) == binding.model.device
+        assert int(reset.tensors.data) == int(binding._runtime.reset_xform_stack_out.ptr)
         expected_event = binding._runtime.producer_event is not None
         assert all(bool(write.cuda_event) == expected_event for batch in batches for write in batch)
+
+
+def test_runtime_owns_each_publication_path_list_once(monkeypatch):
+    with ovstage.Stage("runtime-publication-path-lists") as stage:
+        _populate(stage, DRIVEN_REVOLUTE)
+        binding = ovnewton.attach_ovstage(stage)
+        path_dictionary = binding._pd
+        destroyed = []
+        destroy_path_list = path_dictionary.destroy_path_list
+
+        def tracked_destroy(path_list):
+            destroyed.append(path_list)
+            destroy_path_list(path_list)
+
+        monkeypatch.setattr(path_dictionary, "destroy_path_list", tracked_destroy)
+        binding_ref = weakref.ref(binding)
+        del binding
+        gc.collect()
+
+        assert binding_ref() is None
+        assert destroyed
+        assert len(destroyed) == len(set(destroyed))
+
+
+def test_runtime_releases_publication_path_lists_when_setup_fails(monkeypatch):
+    destroyed = []
+    destroy_path_lists = _runtime._destroy_path_lists
+
+    def tracked_destroy(path_dictionary, path_lists):
+        destroyed.extend(path_lists)
+        destroy_path_lists(path_dictionary, path_lists)
+
+    def fail_finalizer(*_args):
+        raise RuntimeError("publication finalizer failed")
+
+    monkeypatch.setattr(_runtime, "_destroy_path_lists", tracked_destroy)
+    monkeypatch.setattr(_runtime, "_finalize_path_lists", fail_finalizer)
+    with ovstage.Stage("runtime-publication-setup-failure") as stage:
+        _populate(stage, DRIVEN_REVOLUTE)
+        with pytest.raises(RuntimeError, match="publication finalizer failed"):
+            ovnewton.attach_ovstage(stage)
+
+    assert len(destroyed) == 2
+    assert len(destroyed) == len(set(destroyed))
 
 
 def test_runtime_cpu_path_needs_no_device_synchronization(monkeypatch):
@@ -768,7 +859,7 @@ def test_equal_sized_bindings_do_not_share_output_storage():
             (stage_b, pd_b, binding_b, 7.0),
         ):
             with _stage._path_list_query(stage, pd, binding.model.body_label) as query:
-                matrices = _stage.read_fixed(stage, pd, query, "omni:fabric:worldMatrix", ordinal=2)
+                matrices = _stage.read_fixed(stage, pd, query, "omni:xform", ordinal=2)
             rows = np.stack([matrices[i] for i in range(binding.model.body_count)])
             translation, _, _ = _build._decode_pose(rows)
             assert translation[0, 0] == pytest.approx(expected)
@@ -790,7 +881,7 @@ def test_newton_step_is_observable_through_independent_ovstage_read():
         stage.advance_write_floor(ordinal=2).wait()
 
         with _stage._path_list_query(stage, pd, binding.model.body_label) as query:
-            matrices = _stage.read_fixed(stage, pd, query, "omni:fabric:worldMatrix", ordinal=2)
+            matrices = _stage.read_fixed(stage, pd, query, "omni:xform", ordinal=2)
         matrix = np.asarray(matrices[0], dtype=np.float64).reshape(1, 16)
         translation, _, _ = _build._decode_pose(matrix)
         assert translation[0, 2] < initial_z
@@ -818,7 +909,7 @@ def test_spherical_runtime_state_roundtrips_through_body_state():
         binding.update_to_ovstage(external, ordinal=2)
         stage.advance_write_floor(ordinal=2).wait()
         with _stage._path_list_query(stage, pd, binding.model.body_label) as query:
-            matrices = _stage.read_fixed(stage, pd, query, "omni:fabric:worldMatrix", ordinal=2)
+            matrices = _stage.read_fixed(stage, pd, query, "omni:xform", ordinal=2)
         rows = np.stack([matrices[i] for i in range(model.body_count)])
         translations, _, _ = _build._decode_pose(rows)
         assert translations[child, 0] == pytest.approx(3.0)
@@ -931,7 +1022,7 @@ def Xform "Free" (prepend apiSchemas = ["PhysicsRigidBodyAPI"]) {
         binding.update_to_ovstage(state, ordinal=2)
         stage.advance_write_floor(ordinal=2).wait()
         with _stage._path_list_query(stage, pd, binding.model.body_label) as query:
-            matrices = _stage.read_fixed(stage, pd, query, "omni:fabric:worldMatrix", ordinal=2)
+            matrices = _stage.read_fixed(stage, pd, query, "omni:xform", ordinal=2)
         rows = np.stack([matrices[i] for i in range(model.body_count)])
         translations, _, _ = _build._decode_pose(rows)
         assert np.all(translations[:, 0] == 10.0)

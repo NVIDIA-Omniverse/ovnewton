@@ -9,6 +9,8 @@ USD_PRIM_TYPE = "usd-prim-type"
 USD_SCHEMAS = "usd-schemas"
 
 WORLD_MATRIX = "omni:fabric:worldMatrix"
+XFORM = "omni:xform"
+RESET_XFORM_STACK = "omni:resetXformStack"
 BODY_VELOCITY = "physics:velocity"
 BODY_ANGULAR_VELOCITY = "physics:angularVelocity"
 RIGID_BODY_ENABLED = "physics:rigidBodyEnabled"

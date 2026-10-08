@@ -1,13 +1,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Build a ``newton.Model`` from a populated ovstage.
+"""Populate a Newton ``ModelBuilder`` from a populated ovstage.
 
-:func:`build_model` reconstructs bodies + colliders + mass + joints from the
+:func:`add_ovstage` reconstructs bodies + colliders + mass + joints from the
 readable surface (discovery and values via :mod:`._parse`), decodes
 ``omni:fabric:worldMatrix`` natively (:func:`_decode_pose`), and constructs the
-model with the helpers in this module (geometry dispatch, mass finalize, the
-joint pipeline ``_build_joints``).
+builder with the helpers in this module (geometry dispatch, mass preparation,
+the joint pipeline ``_build_joints``). :func:`build_model` remains the
+compatibility path that also finalizes the populated builder.
 
 Prim identity and hierarchy come from ovstage's readable built-in metadata, so
 body/collider/joint paths remain available without loading USD.
@@ -15,7 +16,10 @@ body/collider/joint paths remain available without loading USD.
 
 from __future__ import annotations
 
+import math
+from collections import Counter
 from dataclasses import dataclass, replace
+from itertools import combinations, combinations_with_replacement, product
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import newton
@@ -67,7 +71,6 @@ def _shape_cfg(
     material: Optional[Dict[str, Optional[float]]] = None,
     *,
     collision_enabled: bool = True,
-    collision_group: Optional[int] = None,
     overrides: Optional[Dict[str, Any]] = None,
 ) -> Optional[Any]:
     """Overlay resolved mass/contact material values on the builder defaults."""
@@ -75,14 +78,11 @@ def _shape_cfg(
         (density is None or density <= 0.0)
         and material is None
         and collision_enabled
-        and collision_group is None
         and not overrides
     ):
         return None
     cfg = builder.default_shape_cfg.copy()
     cfg.has_shape_collision = collision_enabled
-    if collision_group is not None:
-        cfg.collision_group = collision_group
     if density is not None and density > 0.0:
         cfg.density = float(density)
     if overrides:
@@ -289,7 +289,6 @@ def _resolve_geometry(
     height: Optional[float],
     scale: Tuple[float, float, float] = (1.0, 1.0, 1.0),
     axis: str = "Z",
-    as_site: bool = False,
 ) -> Optional[Tuple[str, Dict[str, float]]]:
     """Resolve a gprim's geometry to ``(kind, dims)`` from already-read
     dimensions — the single source of truth for shape creation
@@ -303,9 +302,8 @@ def _resolve_geometry(
     its true size, matching how UsdPhysics / ``add_usd`` bake xform scale into
     collision geometry. A non-uniformly scaled sphere uses the largest scale
     component. For axial shapes, height uses the authored-axis component and
-    radius uses the largest perpendicular component. Axial sites follow
-    ``add_usd``'s visual-gprim convention: X scales radius and Y scales height
-    before the authored-axis rotation."""
+    radius uses the largest perpendicular component. The same axis-aware rule
+    applies to collision shapes and sites."""
     sx, sy, sz = float(scale[0]), float(scale[1]), float(scale[2])
     if prim_type == "Sphere":
         r = radius if radius is not None else (max(half) if half is not None else 0.5)
@@ -321,11 +319,8 @@ def _resolve_geometry(
     if prim_type in ("Capsule", "Cylinder", "Cone"):
         r = radius if radius is not None else (max(half[0], half[1]) if half is not None else 0.5)
         hh = (height / 2.0) if height is not None else (half[2] if half is not None else 0.5)
-        if as_site:
-            radial, axial = sx, sy
-        else:
-            axial = {"X": sx, "Y": sy, "Z": sz}.get(axis, sz)
-            radial = {"X": max(sy, sz), "Y": max(sx, sz), "Z": max(sx, sy)}.get(axis, max(sx, sy))
+        axial = {"X": sx, "Y": sy, "Z": sz}.get(axis, sz)
+        radial = {"X": max(sy, sz), "Y": max(sx, sz), "Z": max(sx, sy)}.get(axis, max(sx, sy))
         kind = prim_type.lower()
         return kind, {"radius": float(r * radial), "half_height": float(hh * axial)}
     return None
@@ -360,7 +355,6 @@ def _add_analytic_shape(
     density: Optional[float] = None,
     material: Optional[Dict[str, Optional[float]]] = None,
     collision_enabled: bool = True,
-    collision_group: Optional[int] = None,
     cfg_overrides: Optional[Dict[str, Any]] = None,
     axis: Optional[str] = None,
     label: Optional[str] = None,
@@ -393,7 +387,6 @@ def _add_analytic_shape(
         height=height,
         scale=scale,
         axis=axis or "Z",
-        as_site=as_site,
     )
     if geo is None:
         raise InvalidPhysicsError(f"could not construct {prim_type} shape at {label or '<unknown>'}")
@@ -409,7 +402,6 @@ def _add_analytic_shape(
             density,
             material,
             collision_enabled=collision_enabled,
-            collision_group=collision_group,
             overrides=cfg_overrides,
         )
     if kind == "sphere":
@@ -809,26 +801,59 @@ def _dof_kw(d: Any, rotational: bool, lo: Optional[float], hi: Optional[float]) 
     ):
         if value is not None:
             kw[name] = value
-    kw["actuator_mode"] = newton.JointTargetMode.from_gains(
-        d.drive_stiffness or 0.0, d.drive_damping or 0.0, has_drive=d.drive_enabled
-    )
+    if d.drive_enabled:
+        kw["actuator_mode"] = newton.JointTargetMode.from_gains(
+            d.drive_stiffness or 0.0, d.drive_damping or 0.0, has_drive=True
+        )
     return kw
 
 
+def _joint_dof_config(builder: Any, axis: Any, overrides: Dict[str, Any]) -> Any:
+    """Overlay resolved USD values on the caller's default joint configuration."""
+    defaults = builder.default_joint_cfg
+    values = {
+        name: getattr(defaults, name)
+        for name in (
+            "limit_lower",
+            "limit_upper",
+            "limit_ke",
+            "limit_kd",
+            "target_pos",
+            "target_vel",
+            "target_ke",
+            "target_kd",
+            "damping",
+            "armature",
+            "effort_limit",
+            "velocity_limit",
+            "friction",
+            "actuator_mode",
+        )
+    }
+    newton_defaults = newton.ModelBuilder.JointDofConfig()
+    if "effort_limit" not in overrides and defaults.effort_limit == newton_defaults.effort_limit:
+        # Match add_usd's unbounded D6 fallback unless the caller changed the builder default.
+        values["effort_limit"] = float("inf")
+    values.update(overrides)
+    return newton.ModelBuilder.JointDofConfig(axis=axis, **values)
+
+
 def _apply_initial_joint_state(builder: Any, joint: int, d: _DofDesc, dof: int = 0) -> None:
-    """Apply add_usd's degree-position and unconverted velocity convention."""
+    """Convert authored USD angular positions and velocities to Newton radians."""
     if d.initial_position is not None:
         position = d.initial_position
         if d.rotational:
-            position *= _RAD_PER_DEG
+            position = math.radians(position)
         builder.joint_q[builder.joint_q_start[joint] + dof] = position
     if d.initial_velocity is not None:
-        builder.joint_qd[builder.joint_qd_start[joint] + dof] = d.initial_velocity
+        velocity = d.initial_velocity
+        if d.rotational:
+            velocity = math.radians(velocity)
+        builder.joint_qd[builder.joint_qd_start[joint] + dof] = velocity
 
 
 def _add_merged_d6(builder: Any, record: _JointBuildRecord) -> int:
     """Merge same-body-pair axes into the first joint's D6 frame."""
-    JC = newton.ModelBuilder.JointDofConfig
     group = record.sources
     rep = group[0]
     rep_q = rep.parent_xform.q
@@ -851,14 +876,12 @@ def _add_merged_d6(builder: Any, record: _JointBuildRecord) -> int:
         lo = None if dof.limit_lower == float("-inf") else dof.limit_lower
         hi = None if dof.limit_upper == float("inf") else dof.limit_upper
         if d.prim_type == "PhysicsRevoluteJoint":
-            kw: Dict[str, Any] = {"axis": axis, **_dof_kw(dof, True, lo, hi)}
-            kw.setdefault("effort_limit", float("inf"))
-            angular.append(JC(**kw))
+            kw: Dict[str, Any] = _dof_kw(dof, True, lo, hi)
+            angular.append(_joint_dof_config(builder, axis, kw))
             angular_records.append(r)
         else:  # PhysicsPrismaticJoint — linear DOF, no unit conversion
-            kw = {"axis": axis, **_dof_kw(dof, False, lo, hi)}
-            kw.setdefault("effort_limit", float("inf"))
-            linear.append(JC(**kw))
+            kw = _dof_kw(dof, False, lo, hi)
+            linear.append(_joint_dof_config(builder, axis, kw))
             linear_records.append(r)
     joint = builder.add_joint_d6(
         parent=record.parent,
@@ -935,8 +958,8 @@ def _add_joint(builder: Any, record: _JointBuildRecord) -> int:
             child=record.child,
             parent_xform=source.parent_xform,
             child_xform=source.child_xform,
-            min_distance=-1.0,
-            max_distance=-1.0,
+            min_distance=d.min_distance if d.min_distance >= 0.0 else -1.0,
+            max_distance=d.max_distance if d.max_distance >= 0.0 else -1.0,
             collision_filter_parent=collision_filter_parent,
         )
     elif d.prim_type == "PhysicsJoint":
@@ -944,8 +967,7 @@ def _add_joint(builder: Any, record: _JointBuildRecord) -> int:
         angular = []
         for dof in d.dofs:
             kw = _dof_kw(dof, dof.rotational, dof.limit_lower, dof.limit_upper)
-            kw.setdefault("effort_limit", float("inf"))
-            config = newton.ModelBuilder.JointDofConfig(axis=dof.axis, **kw)
+            config = _joint_dof_config(builder, dof.axis, kw)
             (angular if dof.rotational else linear).append((config, dof))
         joint = builder.add_joint_d6(
             parent=record.parent,
@@ -1013,7 +1035,7 @@ def _resolve_articulation_policies(
     bodies: _Bodies,
     authored: Dict[str, bool],
     hierarchy: "_parse._Hierarchy",
-) -> Dict[int, bool]:
+) -> Tuple[Dict[int, bool], Dict[int, str]]:
     component_paths = [_component_paths(component, bodies) for component in components]
     resolved: Dict[int, bool] = {}
     owners: Dict[int, str] = {}
@@ -1033,7 +1055,7 @@ def _resolve_articulation_policies(
             )
         owners[component] = root
         resolved[component] = enabled
-    return resolved
+    return resolved, owners
 
 
 def _filter_articulation_self_collisions(builder: Any, body_indices: List[int]) -> None:
@@ -1056,12 +1078,24 @@ def _build_joints(
     included = [record for record in records if not record.sources[0].desc.excluded_from_articulation]
     excluded = [record for record in records if record.sources[0].desc.excluded_from_articulation]
     components = _joint_components(included)
-    policies = _resolve_articulation_policies(
+    policies, articulation_roots = _resolve_articulation_policies(
         components,
         bodies,
         articulation_self_collisions or {},
         hierarchy,
     )
+    # add_body already created single-body articulations. Preserve an authored
+    # root only when it identifies one of them, not several independent bodies
+    # or a root already assigned to an explicit joint component.
+    standalone_roots: Dict[str, List[int]] = {}
+    for articulation, start in enumerate(builder.articulation_start):
+        body_path = builder.body_label[builder.joint_child[start]]
+        root = hierarchy.nearest(body_path, articulation_self_collisions or {})
+        if root is not None:
+            standalone_roots.setdefault(root, []).append(articulation)
+    for root, articulations in standalone_roots.items():
+        if len(articulations) == 1 and root not in articulation_roots.values():
+            builder.articulation_label[articulations[0]] = root
     has_orphans = bool(excluded)
     joint_by_path: Dict[str, int] = {}
     for component_index, component in enumerate(components):
@@ -1077,7 +1111,7 @@ def _build_joints(
                 builder.joint_label[jid] = jpaths[0]
             joint_by_path.update((path, jid) for path in jpaths)
         if is_articulation and joint_ids:
-            builder.add_articulation(joints=joint_ids)
+            builder.add_articulation(joints=joint_ids, label=articulation_roots[component_index])
         else:
             has_orphans = has_orphans or bool(joint_ids)
         if policies.get(component_index) is False:
@@ -1092,6 +1126,7 @@ def _build_joints(
 
 
 def _build_mimics(builder: Any, mimics: List[Dict[str, Any]], joint_by_path: Dict[str, int]) -> None:
+    source_counts = Counter(joint_by_path.values())
     for mimic in mimics:
         follower = joint_by_path.get(mimic["path"])
         leader = joint_by_path.get(mimic["leader"])
@@ -1101,13 +1136,32 @@ def _build_mimics(builder: Any, mimics: List[Dict[str, Any]], joint_by_path: Dic
             raise InvalidPhysicsError(
                 f"NewtonMimicAPI at {mimic['path']} references unknown joint {mimic['leader']}"
             )
-        builder.add_constraint_mimic(
-            joint0=follower,
-            joint1=leader,
-            coef0=mimic["coef0"],
-            coef1=mimic["coef1"],
-            label=mimic["path"],
-        )
+        # Newton mimics address whole joints, not individual source axes of a
+        # merged D6. Applying one here would constrain unrelated coordinates.
+        for role, path, joint in (("follower", mimic["path"], follower), ("leader", mimic["leader"], leader)):
+            if source_counts[joint] > 1:
+                raise UnsupportedPhysicsError(
+                    f"NewtonMimicAPI at {mimic['path']}: {role} joint {path} is merged into a D6 joint; "
+                    "Newton's mimic APIs cannot target individual source axes after merging"
+                )
+        coef0 = mimic["coef0"]
+        if mimic["rotational"]:
+            coef0 = math.radians(coef0)
+        set_joint_mimic = getattr(builder, "set_joint_mimic", None)
+        if set_joint_mimic is not None:
+            # Newer solvers consume per-joint mimics, not legacy constraints.
+            try:
+                set_joint_mimic(follower, leader, coeffs=(coef0, mimic["coef1"]))
+            except ValueError as exc:
+                raise InvalidPhysicsError(f"NewtonMimicAPI at {mimic['path']}: {exc}") from exc
+        else:
+            builder.add_constraint_mimic(
+                joint0=follower,
+                joint1=leader,
+                coef0=coef0,
+                coef1=mimic["coef1"],
+                label=mimic["path"],
+            )
 
 
 _R3 = [0, 1, 2, 4, 5, 6, 8, 9, 10]  # flat row-major indices of the upper-left 3x3
@@ -1271,12 +1325,113 @@ def _initialize_free_joint_velocities(builder: Any) -> None:
         builder.joint_qd[start : start + 6] = [float(qd[i]) for i in range(6)]
 
 
-def build_model(stage: Any, pd: Any, ordinal: int = 1):
-    """Build a ``newton.Model`` from a populated ovstage."""
+def _require_empty_builder(builder: Any) -> None:
+    """Reject model data that the current zero-based ovstage importer cannot append to."""
+    count_names = (
+        "world_count",
+        "body_count",
+        "shape_count",
+        "joint_count",
+        "articulation_count",
+        "particle_count",
+        "tri_count",
+        "tet_count",
+        "edge_count",
+        "spring_count",
+        "muscle_count",
+    )
+    populated = {
+        name: int(getattr(builder, name, 0))
+        for name in count_names
+        if int(getattr(builder, name, 0)) != 0
+    }
+    collision_filter_pair_count = len(builder.shape_collision_filter_pairs)
+    if collision_filter_pair_count:
+        populated["shape_collision_filter_pairs"] = collision_filter_pair_count
+    actuator_entry_count = len(builder.actuator_entries)
+    if actuator_entry_count:
+        populated["actuator_entries"] = actuator_entry_count
+    for frequency, count in builder._custom_frequency_counts.items():
+        if count:
+            populated[f"custom_frequency:{frequency}"] = count
+    for name, attribute in builder.custom_attributes.items():
+        value_count = len(attribute.values) if attribute.values is not None else 0
+        if value_count:
+            populated[f"custom_attribute:{name}"] = value_count
+    if populated:
+        details = ", ".join(f"{name}={count}" for name, count in populated.items())
+        raise ValueError(
+            f"builder must not contain model entities, relations, or custom values before add_ovstage(): {details}"
+        )
+
+
+def _apply_collision_groups(
+    builder: Any,
+    groups: List[Dict[str, Any]],
+    shape_by_path: Dict[str, int],
+    hierarchy: _parse._Hierarchy,
+) -> None:
+    """Lower USD group rules to pairs without changing Newton's numeric groups.
+
+    USD groups collide by default, unlike distinct positive Newton group IDs.
+    Named merges share rules; any membership may veto a collision. Collection
+    membership still supports only direct and subtree includes/excludes (OV-7).
+    """
+    if not groups:
+        return
+    merged_ids: Dict[Tuple[str, str], int] = {}
+    group_ids: Dict[str, int] = {}
+    for group in groups:
+        key = ("merge", group["merge_group"]) if group["merge_group"] else ("path", group["path"])
+        group_ids[group["path"]] = merged_ids.setdefault(key, len(merged_ids))
+
+    # -1 denotes colliders outside all USD groups, not a Newton collision ID.
+    blocked = {index: set() for index in [-1, *merged_ids.values()]}
+    for group in groups:
+        source = group_ids[group["path"]]
+        targets = set()
+        for path in group["filtered_groups"]:
+            if path not in group_ids:
+                raise InvalidPhysicsError(f"collision group {group['path']} filters unknown group {path}")
+            targets.add(group_ids[path])
+        if group["inverted"]:
+            targets = blocked.keys() - targets
+        for target in targets:
+            blocked[source].add(target)
+            blocked[target].add(source)
+    if not any(blocked.values()):
+        return
+
+    def in_collection(path: str, roots: List[str]) -> bool:
+        return any(hierarchy.contains(root, path) for root in roots)
+
+    # Resolve rules per membership combination, expanding to shape pairs only
+    # when blocked. This avoids a shape-by-shape pass over allowed collisions.
+    classes: Dict[Tuple[int, ...], List[int]] = {}
+    for path, shape in shape_by_path.items():
+        if not builder.shape_flags[shape] & newton.ShapeFlags.COLLIDE_SHAPES:
+            continue
+        membership = tuple(sorted({
+            group_ids[group["path"]]
+            for group in groups
+            if in_collection(path, group["includes"]) and not in_collection(path, group["excludes"])
+        })) or (-1,)
+        classes.setdefault(membership, []).append(shape)
+
+    for (members_a, shapes_a), (members_b, shapes_b) in combinations_with_replacement(classes.items(), 2):
+        if not any(b in blocked[a] for a in members_a for b in members_b):
+            continue
+        pairs = combinations(shapes_a, 2) if members_a == members_b else product(shapes_a, shapes_b)
+        for shape_a, shape_b in pairs:
+            builder.add_shape_collision_filter_pair(shape_a, shape_b)
+
+
+def add_ovstage(builder: Any, stage: Any, pd: Any, ordinal: int = 1) -> bool:
+    """Populate ``builder`` from ovstage and report whether it has orphan joints."""
+    _require_empty_builder(builder)
     meters_per_unit, up_axis = _parse.read_stage_units(stage, pd, ordinal)
     hierarchy = _parse.read_hierarchy(stage, pd, ordinal)
     _parse.validate_unsupported_point_instancers(stage, pd, ordinal, hierarchy=hierarchy)
-    builder = newton.ModelBuilder(up_axis=getattr(newton.Axis, up_axis))
     gravity = _parse.scene_gravity_vector(
         stage,
         pd,
@@ -1284,8 +1439,10 @@ def build_model(stage: Any, pd: Any, ordinal: int = 1):
         meters_per_unit=meters_per_unit,
         up_axis=up_axis,
     )
-    if gravity is not None:
-        builder.begin_world(gravity=wp.vec3(*gravity))
+    builder.up_axis = getattr(newton.Axis, up_axis)
+    if gravity is None:
+        gravity = tuple(-9.81 * component for component in builder.up_axis.to_vector())
+    builder.gravity = wp.vec3(*gravity)
     _, body_paths = _parse.read_bodies(stage, pd, ordinal, hierarchy=hierarchy)
     materials = _parse.read_physics_materials(stage, pd, ordinal)
     n = len(body_paths)
@@ -1466,17 +1623,6 @@ def build_model(stage: Any, pd: Any, ordinal: int = 1):
             **_analytic_geometry_kwargs(site),
         )
 
-    collision_groups = _parse.read_collision_groups(stage, pd, ordinal)
-
-    def _in_collection(path: str, roots: List[str]) -> bool:
-        return any(hierarchy.contains(root, path) for root in roots)
-
-    def _collision_group(path: str) -> Optional[int]:
-        for group, collection in enumerate(collision_groups, start=1):
-            if _in_collection(path, collection["includes"]) and not _in_collection(path, collection["excludes"]):
-                return group
-        return None
-
     remeshing: Dict[str, List[int]] = {}
     shape_by_path: Dict[str, int] = {}
     disabled_shapes: List[int] = []
@@ -1500,7 +1646,6 @@ def build_model(stage: Any, pd: Any, ordinal: int = 1):
     for c in colliders:
         path = c["path"]
         shape_options, restore_margin = _shape_options(builder, c)
-        collision_group = _collision_group(path)
         cm = c["world_matrix"]
         if cm is None:
             raise OvstageContractError(f"collider has no world transform: {path}")
@@ -1527,7 +1672,6 @@ def build_model(stage: Any, pd: Any, ordinal: int = 1):
                     None,
                     material,
                     collision_enabled=c["collision_enabled"],
-                    collision_group=collision_group,
                     overrides=shape_options,
                 ),
                 label=path,
@@ -1567,7 +1711,6 @@ def build_model(stage: Any, pd: Any, ordinal: int = 1):
                     shape_density,
                     material,
                     collision_enabled=c["collision_enabled"],
-                    collision_group=collision_group,
                     overrides=_mesh_shape_options(shape_options),
                 ),
                 label=path,
@@ -1594,7 +1737,6 @@ def build_model(stage: Any, pd: Any, ordinal: int = 1):
                 density=shape_density,
                 material=material,
                 collision_enabled=c["collision_enabled"],
-                collision_group=collision_group,
                 cfg_overrides=shape_options,
                 axis=c.get("axis"),
                 label=path,
@@ -1605,6 +1747,9 @@ def build_model(stage: Any, pd: Any, ordinal: int = 1):
         shape_by_path[path] = shape
         if not c["collision_enabled"]:
             disabled_shapes.append(shape)
+
+    # Newton propagates existing filters to additional convex parts during remeshing.
+    _apply_collision_groups(builder, _parse.read_collision_groups(stage, pd, ordinal), shape_by_path, hierarchy)
 
     for method, shapes in remeshing.items():
         builder.approximate_meshes(method=method, shape_indices=shapes)
@@ -1641,7 +1786,17 @@ def build_model(stage: Any, pd: Any, ordinal: int = 1):
     )
     _build_mimics(builder, _parse.read_mimics(stage, pd, ordinal), joint_by_path)
     _initialize_free_joint_velocities(builder)
-    if gravity is not None:
-        builder.end_world()
-    model = builder.finalize(skip_validation_joints=has_orphan_joints)
-    return model
+    from . import _deformables  # noqa: PLC0415
+
+    deformable_values = _deformables.read_deformables(stage, pd, ordinal)
+    _deformables.build_deformables(builder, deformable_values)
+    return has_orphan_joints
+
+
+def build_model(stage: Any, pd: Any, ordinal: int = 1):
+    """Build and finalize a ``newton.Model`` from a populated ovstage."""
+    builder = newton.ModelBuilder()
+    has_orphan_joints = add_ovstage(builder, stage, pd, ordinal=ordinal)
+    if builder.particle_count:
+        builder.color(include_bending=True)
+    return builder.finalize(skip_validation_joints=has_orphan_joints)

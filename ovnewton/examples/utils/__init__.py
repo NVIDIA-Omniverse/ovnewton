@@ -3,7 +3,6 @@
 
 """Shared helpers for the ovnewton examples."""
 
-from .transform_relay import TransformRelay, find_paths_by_type
 from .viewport import FlyCamera, GLViewport
 
-__all__ = ["FlyCamera", "GLViewport", "TransformRelay", "find_paths_by_type"]
+__all__ = ["FlyCamera", "GLViewport"]

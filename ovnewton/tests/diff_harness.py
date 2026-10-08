@@ -62,6 +62,8 @@ _JOINT_DOF_ARRAYS = [
 _JOINT_COORD_ARRAYS = ["joint_target_q"]
 _JOINT_STATE = ["joint_q", "joint_qd", "joint_q_start", "joint_qd_start", "joint_target_q_start"]
 _MIMIC_ARRAYS = [
+    "joint_mimic_joint",
+    "joint_mimic_coeffs",
     "constraint_mimic_joint0",
     "constraint_mimic_joint1",
     "constraint_mimic_coef0",
@@ -109,8 +111,77 @@ def _model_arrays(model):
     return out
 
 
+def mimic_signatures(model):
+    """Label-aligned mimic semantics across Newton's old and new storage."""
+    labels = model["joint_label"]
+    result = [
+        (labels[int(follower)], labels[int(leader)], float(offset), float(multiplier), bool(enabled))
+        for follower, leader, offset, multiplier, enabled in zip(
+            model["constraint_mimic_joint0"],
+            model["constraint_mimic_joint1"],
+            model["constraint_mimic_coef0"],
+            model["constraint_mimic_coef1"],
+            model["constraint_mimic_enabled"],
+            strict=True,
+        )
+    ]
+    if "joint_mimic_joint" in model:
+        for follower, leader in enumerate(model["joint_mimic_joint"]):
+            if leader >= 0:
+                offset, multiplier = model["joint_mimic_coeffs"][follower]
+                result.append((labels[follower], labels[int(leader)], float(offset), float(multiplier), True))
+    return result
+
+
 def _quat_close(a, b, atol):
     return bool(np.all(np.abs(np.abs(np.sum(a * b, axis=-1)) - 1.0) <= atol))  # sign-insensitive
+
+
+def _mesh_triangles(mesh):
+    """Canonical oriented triangles, retaining duplicates but ignoring indexing."""
+    vertices, indices = mesh
+    triangles = np.asarray(vertices)[np.asarray(indices).reshape(-1, 3)]
+    if not len(triangles):
+        return np.empty((0, 9))
+    # Only cyclic rotations preserve winding. Pick the lexicographically first
+    # rotation, then sort faces so expansion and face order are immaterial.
+    rotations = np.stack([np.roll(triangles, -i, axis=1).reshape(-1, 9) for i in range(3)], axis=1)
+    first = np.lexsort(rotations[:, :, ::-1].transpose(2, 0, 1), axis=-1)[:, 0]
+    faces = rotations[np.arange(len(rotations)), first]
+    return faces[np.lexsort(faces[:, ::-1].T)]
+
+
+def _meshes_close(ref, ours, atol, rtol):
+    ref_faces, our_faces = _mesh_triangles(ref), _mesh_triangles(ours)
+    if ref_faces.shape != our_faces.shape:
+        return False
+    if np.allclose(ref_faces, our_faces, atol=atol, rtol=rtol):
+        return True
+    if not np.isfinite(ref_faces).all() or not np.isfinite(our_faces).all():
+        return False
+
+    # Tiny perturbations can change the canonical corner or face order. Match
+    # nearby oriented triangles within tolerance, one-to-one to keep duplicates.
+    from scipy.sparse import csr_matrix
+    from scipy.sparse.csgraph import maximum_bipartite_matching
+    from scipy.spatial import cKDTree
+
+    ref_triangles = ref_faces.reshape(-1, 3, 3)
+    our_triangles = our_faces.reshape(-1, 3, 3)
+    radius = np.sqrt(3.0) * (atol + rtol * np.abs(our_faces).max())
+    candidates = cKDTree(our_triangles.mean(axis=1)).query_ball_point(ref_triangles.mean(axis=1), radius)
+    rows, columns = [], []
+    for index, neighbors in enumerate(candidates):
+        triangles = our_triangles[neighbors]
+        matches = np.zeros(len(neighbors), dtype=bool)
+        for rotation in range(3):
+            matches |= np.isclose(
+                ref_triangles[index], np.roll(triangles, rotation, axis=1), atol=atol, rtol=rtol
+            ).all(axis=(1, 2))
+        columns.extend(np.asarray(neighbors, dtype=int)[matches].tolist())
+        rows.extend([index] * int(matches.sum()))
+    graph = csr_matrix((np.ones(len(rows)), (rows, columns)), shape=(len(ref_faces), len(our_faces)))
+    return bool(np.all(maximum_bipartite_matching(graph) >= 0))
 
 
 def compare_models(
@@ -181,13 +252,9 @@ def compare_models(
                 rm, om = ref["shape_mesh"][i], ours["shape_mesh"][j]
                 if (rm is None) != (om is None):
                     mm.append("%s.shape_mesh: ref %s vs ours %s" % (p, rm is not None, om is not None))
-                elif rm is not None and (
-                    rm[0].shape != om[0].shape
-                    or rm[1].shape != om[1].shape
-                    or not np.allclose(rm[0], om[0], atol=atol, rtol=rtol)
-                    or not np.array_equal(rm[1], om[1])
-                ):
-                    mm.append("%s.shape_mesh differs" % p)
+                elif rm is not None:
+                    if not _meshes_close(rm, om, atol, rtol):
+                        mm.append("%s.shape_mesh differs" % p)
             if (
                 "shape_mesh_maxhullvert" in ref
                 and "shape_mesh_maxhullvert" in ours
@@ -207,9 +274,6 @@ def compare_models(
 
         rfilters = _label_pairs(ref, ref.get("shape_collision_filter_pairs", ()))
         ofilters = _label_pairs(ours, ours.get("shape_collision_filter_pairs", ()))
-        if rfilters != ofilters:
-            mm.append("shape collision filter pairs: ref %s vs ours %s" % (sorted(rfilters), sorted(ofilters)))
-
         def _groups_collide(a, b):
             if a == 0 or b == 0:
                 return False
@@ -218,14 +282,21 @@ def compare_models(
             return a != b
 
         if "shape_collision_group" in ref and "shape_collision_group" in ours:
+            # USD group rules can be encoded as numeric groups or explicit
+            # pairs. Compare the combined filtering decision, not its encoding.
             for offset, p in enumerate(common_shapes):
                 for q in common_shapes[offset + 1 :]:
                     ri, rj = rs[p], rs[q]
                     oi, oj = os[p], os[q]
                     rc = _groups_collide(int(ref["shape_collision_group"][ri]), int(ref["shape_collision_group"][rj]))
                     oc = _groups_collide(int(ours["shape_collision_group"][oi]), int(ours["shape_collision_group"][oj]))
+                    pair = tuple(sorted((str(p), str(q))))
+                    rc = rc and pair not in rfilters
+                    oc = oc and pair not in ofilters
                     if rc != oc:
-                        mm.append("shape collision groups for %s/%s: ref %s vs ours %s" % (p, q, rc, oc))
+                        mm.append("shape collision filtering for %s/%s: ref %s vs ours %s" % (p, q, rc, oc))
+        elif rfilters != ofilters:
+            mm.append("shape collision filter pairs: ref %s vs ours %s" % (sorted(rfilters), sorted(ofilters)))
     if check_joints:
         # Align joints by their (parent_label, child_label) edge: merged USD
         # siblings map many paths to one Newton D6 joint, while a body edge is a
@@ -324,11 +395,13 @@ def _step_model(model, n, *, state=None):
     solver = newton.solvers.SolverXPBD(model, iterations=ITERS)
     s0 = state if state is not None else model.state()
     s1 = model.state()
-    control, contacts = model.control(), model.contacts()
+    control = model.control()
+    collision_pipeline = newton.CollisionPipeline(model)
+    contacts = collision_pipeline.contacts()
     for _ in range(n):
         for _ in range(SUBSTEPS):
             s0.clear_forces()
-            model.collide(s0, contacts)
+            collision_pipeline.collide(s0, contacts)
             solver.step(s0, s1, control, contacts, DT / SUBSTEPS)
             s0, s1 = s1, s0
     return s0.body_q.numpy()  # (B,7): px,py,pz, qx,qy,qz,qw
@@ -336,12 +409,14 @@ def _step_model(model, n, *, state=None):
 
 def _run_reference(src, *args):
     """Run a reference snippet (which uses add_usd) in an isolated subprocess —
-    usd-core only, the built USD kept off LD_LIBRARY_PATH so pxr loads cleanly,
-    and PYTHONPATH set so the child can ``import diff_harness`` — returning its
-    ``PICKLE64 ``-prefixed payload, unpickled. Shared by reference_poses/reference_model."""
+    the ovstage-built USD kept off LD_LIBRARY_PATH so the selected OpenUSD
+    provider loads cleanly, and PYTHONPATH set so the child can ``import
+    diff_harness`` — returning its ``PICKLE64 ``-prefixed payload, unpickled.
+    Shared by reference_poses/reference_model."""
     env = dict(os.environ)
     for k in ("OVSTAGE_LIBRARY_PATH", "OVPOPULATION_LIBRARY_PATH", "OVHIERARCHY_LIBRARY_PATH"):
         env.pop(k, None)
+    env.setdefault("PXR_WORK_THREAD_LIMIT", "1")
     env["LD_LIBRARY_PATH"] = "/usr/local/cuda/lib64"
     python_paths = [str(pathlib.Path(__file__).parent)]
     newton_source = env.get("OVNEWTON_NEWTON_SOURCE")
@@ -358,7 +433,7 @@ def _run_reference(src, *args):
     return pickle.loads(base64.b64decode(line[len("PICKLE64 ") :]))
 
 
-# reference: run add_usd in an isolated subprocess (usd-core only, no built USD)
+# reference: run add_usd in an isolated subprocess (selected provider, no built USD)
 _REF_SRC = r"""
 import sys, base64, json, pickle
 import numpy as np
@@ -379,10 +454,12 @@ if perturb != 0.0:
     import warp as wp
     jq = s0.joint_q.numpy(); jq[:] += perturb
     s0.joint_q.assign(wp.array(jq, dtype=wp.float32, device=m.device))
-control, contacts = m.control(), m.contacts()
+control = m.control()
+collision_pipeline = _newton.CollisionPipeline(m)
+contacts = collision_pipeline.contacts()
 for _ in range(n):
     for _ in range(substeps):
-        s0.clear_forces(); m.collide(s0, contacts)
+        s0.clear_forces(); collision_pipeline.collide(s0, contacts)
         solver.step(s0, s1, control, contacts, dt / substeps); s0, s1 = s1, s0
 q = s0.body_q.numpy()
 out = {p: q[i].tolist() for p, i in ret["path_body_map"].items()}
