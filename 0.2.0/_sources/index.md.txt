@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 
 `ovnewton` connects the [Newton](https://github.com/newton-physics/newton) physics engine to the [`ovstage`](https://nvidia-omniverse.github.io/ovstage/) scene store.
 
-This site describes `ovnewton` {{ ovnewton_version }} from commit {{ ovnewton_commit }}.
+This site describes `ovnewton` {{ ovnewton_version }}. [Release source](https://github.com/NVIDIA-Omniverse/ovnewton/tree/v0.2.0).
 
 :::{warning}
 `ovnewton` is experimental software. Its API and packaging may change before 1.0.
