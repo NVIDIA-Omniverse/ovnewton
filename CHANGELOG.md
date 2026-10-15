@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 
 Notable user-facing changes to ovnewton.
 
-## [0.2.0]
+## [0.2.0] - 2026-10-08
 
 ### Added
 
