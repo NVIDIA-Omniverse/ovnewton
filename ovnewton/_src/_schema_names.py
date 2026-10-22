@@ -7,6 +7,7 @@ USD_PATH = "usd-path"
 USD_PARENT = "usd-parent"
 USD_PRIM_TYPE = "usd-prim-type"
 USD_SCHEMAS = "usd-schemas"
+USD_API_SCHEMAS = "usd-metadata:apiSchemas"
 
 WORLD_MATRIX = "omni:fabric:worldMatrix"
 XFORM = "omni:xform"

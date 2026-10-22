@@ -389,6 +389,7 @@ class StageBinding:
         _runtime._capture_runtime_read_layout(stage, self._pd, self._runtime, ordinal)
         _runtime._derive_joint_state(self._runtime, model, model.joint_q, model.joint_qd)
         _runtime.initialize_output(self, ordinal)
+        _runtime.initialize_runtime_selection(self)
 
     @property
     def model(self) -> newton.Model:
@@ -497,14 +498,24 @@ class StageBinding:
         control: newton.Control,
         *,
         ordinal: int | None = None,
+        attributes: Sequence[str] | None = None,
     ) -> None:
-        """Apply all available state and drive targets from ovstage.
+        """Apply sealed state and drive targets from ovstage.
 
-        Body poses include transforms authored on ancestor prims.
-        If ``ordinal`` is omitted, this reads the latest values made visible by
-        the stage. Otherwise, it reads values at or below that ordinal. The
-        method reads all supported state and drive fields; callers cannot select
-        a subset.
+        With ``attributes=None`` (the default), read all supported body/joint
+        state and drive targets. Body poses include ancestor transforms.
+        Select any combination of ``body_q``, ``body_qd``, ``jointPosition``,
+        ``jointVelocity``, ``jointPositionTarget``, and ``jointVelocityTarget``
+        to update only those fields. Joint fields cover existing single-DOF
+        channels; other coordinates and unselected arrays stay unchanged.
+        Explicit selections do not run forward/inverse kinematics or reconcile
+        body and joint state. Use the default full resync for body-derived joint
+        coordinates. An empty selection is a no-op; unknown names are rejected.
+
+        Joint angular values convert from stage degrees to Newton radians;
+        linear values retain the stage's length units. If ``ordinal`` is
+        omitted, read the latest sealed values. An explicit ordinal is a
+        consistency ceiling, not a request for historical payloads.
 
         Raises :class:`ovnewton.OvstageContractError` if the stage cannot provide
         one consistent set of values.
@@ -520,6 +531,7 @@ class StageBinding:
                 state=state,
                 runtime=self._runtime,
                 control=control,
+                attributes=attributes,
             )
 
 
@@ -537,6 +549,10 @@ def add_ovstage(
     and gravity, adds the stage-backed entities, and returns without finalizing
     the builder or creating a :class:`StageBinding`. Callers may perform
     solver-specific preparation afterwards.
+
+    Populate USD inputs with :func:`ovnewton.population_desc` (or an equivalent
+    descriptor) so unsupported authored API names survive schema population.
+    This function cannot detect names discarded before import.
 
     Supported surface cloth retains its publication mappings through Newton's
     custom model attributes. For VBD cloth, call
@@ -572,6 +588,9 @@ def attach_ovstage(
     :class:`newton.ModelBuilder`, adds the ovstage contents, finalizes the
     model, and binds it. Call :func:`add_ovstage` directly when the application
     needs to configure the builder before finalization.
+
+    For imports, populate USD inputs with :func:`ovnewton.population_desc` or
+    an equivalent descriptor to preserve unsupported authored API names.
 
     ``ordinal`` bounds the populated payloads used to build or validate the
     binding and defaults to the conventional initial population ordinal, 1.

@@ -1067,10 +1067,18 @@ def test_output_read_preserves_multi_axis_joint_limit_layout():
         )
 
 
-def test_output_read_uses_authored_joint_body_order_and_unlimited_bounds():
+@pytest.mark.parametrize("static_target", [False, True])
+def test_output_read_uses_authored_joint_body_order_and_unlimited_bounds(static_target):
+    usda = REVERSED_WORLD_JOINT
+    if static_target:
+        usda = usda.replace(
+            "rel physics:body0 = </World/Body>",
+            "rel physics:body0 = </World/Body>\n        rel physics:body1 = </World>",
+        )
     with ovstage.Stage("output-read-joint-body-order") as stage, ovstage.PathDictionary(stage) as pd:
-        _populate(stage, REVERSED_WORLD_JOINT)
-        binding = _binding(stage, pd)
+        _populate(stage, usda)
+        with wp.ScopedDevice("cpu"):
+            binding = ovnewton.attach_ovstage(stage)
         model = binding.model
         state = model.state()
         control = model.control()
@@ -1112,6 +1120,30 @@ def test_output_read_uses_authored_joint_body_order_and_unlimited_bounds():
             _logical_values(groups["jointLimit"]),
             ((-np.finfo(np.float32).max, np.finfo(np.float32).max),),
         )
+
+
+@pytest.mark.parametrize("target", ["/Missing", "/World/OtherBody", "/World/Body/Anchor"])
+def test_static_endpoint_fallback_preserves_caller_model_body_validation(target):
+    usda = f'''#usda 1.0
+def Xform "World" (prepend apiSchemas = ["PhysicsArticulationRootAPI"]) {{
+    def Xform "Body" (prepend apiSchemas = ["PhysicsRigidBodyAPI"]) {{
+        def Xform "Anchor" {{}}
+    }}
+    def Xform "OtherBody" (prepend apiSchemas = ["PhysicsRigidBodyAPI"]) {{}}
+    def PhysicsRevoluteJoint "Joint" {{
+        rel physics:body0 = </World/Body>
+        rel physics:body1 = <{target}>
+    }}
+}}
+'''
+    with wp.ScopedDevice("cpu"), ovstage.Stage("static-endpoint-model-validation") as stage:
+        _populate(stage, usda)
+        builder = newton.ModelBuilder()
+        body = builder.add_link(label="/World/Body")
+        joint = builder.add_joint_revolute(-1, body, label="/World/Joint")
+        builder.add_articulation([joint])
+        with pytest.raises(ValueError, match="bodies do not match the connected Newton model"):
+            ovnewton.attach_ovstage(stage, model=builder.finalize())
 
 
 @pytest.mark.parametrize(

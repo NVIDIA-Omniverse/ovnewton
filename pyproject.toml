@@ -3,7 +3,7 @@
 
 [project]
 name = "ovnewton"
-version = "0.2.0"
+version = "0.2.1"
 description = "Connect the Newton physics engine to ovstage / the Omniverse library ecosystem."
 readme = "README.md"
 license = "Apache-2.0"
@@ -11,8 +11,8 @@ license-files = ["LICENSE.md", "THIRD_PARTY_NOTICES.md"]
 authors = [{ name = "NVIDIA CORPORATION & AFFILIATES" }]
 requires-python = ">=3.11,<3.15"
 dependencies = [
-    "ovstage>=0.2.0.377349,<0.3",
-    "newton>=1.6.0",
+    "ovstage==0.3.0.1791986420",
+    "newton>=1.7.0",
     "newton-usd-schemas>=0.5.0,<0.6",
     "physx-usd-schemas>=25.11.1,<26",
     "warp-lang>=1.17.0",
@@ -34,7 +34,7 @@ Issues = "https://github.com/NVIDIA-Omniverse/ovnewton/issues"
 
 [project.optional-dependencies]
 dev = [
-    "newton[importers]>=1.6.0",
+    "newton[importers]>=1.7.0",
     "pytest>=8",
     "ruff>=0.15",
 ]
@@ -42,9 +42,9 @@ assets-audit = [
     "GitPython>=3.2.0",
 ]
 examples = [
-    "newton[sim]>=1.6.0",
-    "ovrtx>=0.5.0.377615,<0.6",
-    "pillow>=12.3.0",
+    "newton[sim]>=1.7.0",
+    "ovrtx>=0.6.0.1791947691,<0.7",
+    "pillow>=13.0.0",
     "pyglet>=2.1",
 ]
 
@@ -78,6 +78,8 @@ only-include = [
     "ovnewton/tests/test_deformable_inputs.py",
     "ovnewton/tests/test_diff.py",
     "ovnewton/tests/test_diff_harness_selfcheck.py",
+    "ovnewton/tests/test_mjc_equalities.py",
+    "ovnewton/tests/test_mjc_joints.py",
     "ovnewton/tests/test_newton_assets_diff.py",
     "ovnewton/tests/test_output_read.py",
     "ovnewton/tests/test_population_contract.py",
@@ -89,12 +91,15 @@ only-include = [
     "ovnewton/tests/test_write.py",
     "ovnewton/tests/typecheck_public_api.py",
     "docs/site",
+    "skills/using-ovnewton",
+    "skills/physical-ai-physics-selection",
 ]
 
 [tool.hatch.build.targets.sdist.force-include]
 ".licenserc.yaml" = ".licenserc.yaml"
 "CHANGELOG.md" = "CHANGELOG.md"
 "SECURITY.md" = "SECURITY.md"
+"CONTRIBUTING.md" = "CONTRIBUTING.md"
 
 [tool.hatch.build.targets.wheel]
 only-include = [
@@ -116,7 +121,7 @@ only-include = [
 
 [dependency-groups]
 assets-audit = ["GitPython>=3.2.0"]
-dev = ["basedpyright>=1.39.9", "newton[importers]>=1.6.0", "pytest>=8", "ruff>=0.15"]
+dev = ["basedpyright>=1.39.9", "newton[importers]>=1.7.0", "pytest>=8", "ruff>=0.15"]
 docs = [
     "sphinx>=7.4",
     "myst-parser>=3.0",

@@ -79,7 +79,7 @@ def Xform "World" {
             stage,
             usda,
             ordinal=1,
-            time_code=math.nan,
+            time=math.nan,
             descs=(
                 population.Desc(domains=PopulationDomain.PHYSICS),
                 _deformables.population_desc(),
@@ -140,7 +140,7 @@ def test_builds_supported_identity_transform_surface():
 
 @pytest.mark.parametrize("build_path", ["build_model", "attach_ovstage", "caller_owned"])
 @pytest.mark.parametrize("device", ["cpu", "cuda:0"])
-def test_surface_points_publish_after_model_finalization(build_path, device):
+def test_surface_points_publish_after_model_finalization(build_path, device, monkeypatch):
     import newton
     import ovstage
     import warp as wp
@@ -190,7 +190,7 @@ def Xform "World" {
             stage,
             usda,
             ordinal=1,
-            time_code=math.nan,
+            time=math.nan,
             descs=(
                 population.Desc(domains=PopulationDomain.ALL),
                 _deformables.population_desc(),
@@ -213,14 +213,21 @@ def Xform "World" {
             binding = ovnewton.attach_ovstage(stage)
 
         state = binding.model.state()
-        moved_points = state.particle_q.numpy() + np.asarray((0, 0, 1), dtype=np.float32)
-        state.particle_q.assign(moved_points)
-        binding.update_to_ovstage(state, ordinal=2)
-        stage.advance_write_floor(ordinal=2).wait()
+
+        def unexpected_query(*_args):
+            raise AssertionError("surface publication must reuse its fixed query")
+
+        for ordinal in (2, 3):
+            moved_points = state.particle_q.numpy() + np.asarray((0, 0, 1), dtype=np.float32)
+            state.particle_q.assign(moved_points)
+            with monkeypatch.context() as patch:
+                patch.setattr(stage, "query_from_path_list", unexpected_query)
+                binding.update_to_ovstage(state, ordinal=ordinal)
+            stage.advance_write_floor(ordinal=ordinal).wait()
 
         expected_points = {
-            "/World/Surface/Sim": [(0, 0, 1), (1, 0, 1), (0, 1, 1)],
-            "/World/SecondSurface/Sim": [(2, 0, 1), (3, 0, 1), (2, 1, 1)],
+            "/World/Surface/Sim": [(0, 0, 2), (1, 0, 2), (0, 1, 2)],
+            "/World/SecondSurface/Sim": [(2, 0, 2), (3, 0, 2), (2, 1, 2)],
         }
         with ovstage.PathDictionary(stage) as pd:
             for path, expected in expected_points.items():
@@ -228,7 +235,7 @@ def Xform "World" {
                 try:
                     with stage.query_from_path_list(path_list) as query:
                         with stage.read_attributes(
-                            query, [pd.intern_token("points")], ovstage.OrdinalRange(2, 2)
+                            query, [pd.intern_token("points")], ovstage.OrdinalRange(3, 3)
                         ) as read:
                             groups = 0
                             for group in read.groups():

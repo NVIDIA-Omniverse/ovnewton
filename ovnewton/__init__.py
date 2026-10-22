@@ -4,6 +4,7 @@
 from ._src._errors import InvalidPhysicsError as InvalidPhysicsError
 from ._src._errors import OvstageContractError as OvstageContractError
 from ._src._errors import UnsupportedPhysicsError as UnsupportedPhysicsError
+from ._src._schemas import population_desc as population_desc
 from ._src._schemas import register_usd_schemas as register_usd_schemas
 from ._src.ovnewton import ObjectScope as ObjectScope
 from ._src.ovnewton import OvstageImportResult as OvstageImportResult
@@ -36,5 +37,6 @@ __all__ = [
     "__version__",
     "add_ovstage",
     "attach_ovstage",
+    "population_desc",
     "register_usd_schemas",
 ]

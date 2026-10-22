@@ -14,8 +14,8 @@ import warp as wp
 
 from . import _stage
 from ._errors import InvalidPhysicsError, OvstageContractError, UnsupportedPhysicsError
-from ._parse import _row_scalar, _token_value, read_hierarchy
-from ._schema_names import USD_SCHEMAS, WORLD_MATRIX
+from ._parse import _row_scalar, _token_value, read_applied_schemas, read_hierarchy
+from ._schema_names import WORLD_MATRIX
 
 
 class DeformableFamily(Enum):
@@ -146,7 +146,6 @@ _POPULATION_ATTRIBUTES = tuple(
         )
     )
 )
-_RAW_API_SCHEMAS = "usd-metadata:apiSchemas"
 
 
 def population_desc() -> Any:
@@ -179,24 +178,9 @@ def _deformable_schema_paths(
 ) -> Mapping[str, set[str]]:
     """Index registered and raw applied-schema names by prim path."""
     result = {schema: set() for schema in _DEFORMABLE_SCHEMAS}
-    if not paths:
-        return result
-    with _stage._path_list_query(stage, pd, paths) as query:
-        columns = _stage.read_columns(
-            stage,
-            pd,
-            query,
-            (USD_SCHEMAS, _RAW_API_SCHEMAS),
-            ordinal,
-            ragged=(USD_SCHEMAS, _RAW_API_SCHEMAS),
-        )
-    for rows in columns.values():
-        for index, row in rows.items():
-            path = paths[index]
-            for token in row:
-                schema = pd.token_to_string(int(token))
-                if schema in result:
-                    result[schema].add(path)
+    for path, schemas in read_applied_schemas(stage, pd, ordinal, paths).items():
+        for schema in schemas & result.keys():
+            result[schema].add(path)
     return result
 
 

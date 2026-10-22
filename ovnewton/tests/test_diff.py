@@ -83,7 +83,7 @@ MODEL_SCENES = [
 ]
 
 UNSUPPORTED_SCENES = [
-    ("humanoid_mjc", os.path.join(NEWTON_ASSETS, "humanoid_mjc.usda"), "MjcJointAPI"),
+    ("humanoid_mjc", os.path.join(NEWTON_ASSETS, "humanoid_mjc.usda"), "register_custom_attributes"),
 ]
 
 NEGATIVE_SCALE_CUBE = """#usda 1.0
@@ -135,14 +135,20 @@ def Xform "Body" (
 
 def _ovstage_model(asset, stage_name="ovstage-diff"):
     with ovstage.Stage(stage_name) as stage, ovstage.PathDictionary(stage) as pd:
-        population.open_usd(stage, asset, ordinal=1, domains=PopulationDomain.ALL)
+        population.open_usd_with_desc(
+            stage, asset, ordinal=1, time=population.DEFAULT_TIME,
+            descs=(population.Desc(domains=PopulationDomain.ALL), ovnewton.population_desc()),
+        )
         stage.advance_write_floor(ordinal=1).wait()
         return _build.build_model(stage, pd, ordinal=1)
 
 
 def _ovstage_model_from_string(usda, stage_name="ovstage-strict"):
     with ovstage.Stage(stage_name) as stage, ovstage.PathDictionary(stage) as pd:
-        population.open_usd_from_string(stage, usda, ordinal=1, domains=PopulationDomain.ALL)
+        population.open_usd_from_string_with_desc(
+            stage, usda, ordinal=1, time=population.DEFAULT_TIME,
+            descs=(population.Desc(domains=PopulationDomain.ALL), ovnewton.population_desc()),
+        )
         stage.advance_write_floor(ordinal=1).wait()
         return _build.build_model(stage, pd, ordinal=1)
 
@@ -174,16 +180,6 @@ def test_model_matches_add_usd(name, asset):
             "the pinned ovstage cannot mirror the unregistered/unapplied joint schema fields: "
             + ", ".join(sorted(observed_gaps))
         )
-
-
-def _correct_newton_16_angular_velocity(ref, label, dof=0):
-    # Newton 1.6.0 and 1.6.1 kept initial angular velocities in degrees/s.
-    # Keep their other fields as the oracle, but require USD-correct units here.
-    if newton.__version__ in ("1.6.0", "1.6.1"):
-        joint = list(ref["joint_label"]).index(label)
-        index = ref["joint_qd_start"][joint] + dof
-        assert ref["joint_qd"][index] == pytest.approx(0.25)
-        ref["joint_qd"][index] = np.deg2rad(0.25)
 
 
 def test_authored_single_dof_initial_state_matches_add_usd(tmp_path):
@@ -222,7 +218,6 @@ def Xform "World" (prepend apiSchemas = ["PhysicsArticulationRootAPI"]) {
     velocities = model.joint_qd.numpy()
     assert velocities[starts[model.joint_label.index("/World/Revolute")]] == pytest.approx(np.deg2rad(0.25))
     assert velocities[starts[model.joint_label.index("/World/Prismatic")]] == pytest.approx(-0.2)
-    _correct_newton_16_angular_velocity(ref, "/World/Revolute")
     mismatches = dh.compare_models(ref, dh._model_arrays(model), check_joints=True)
     assert not mismatches, "initial-state mismatches vs add_usd:\n  " + "\n  ".join(mismatches)
 
@@ -263,7 +258,6 @@ def Xform "World" (prepend apiSchemas = ["PhysicsArticulationRootAPI"]) {
     joint = model.joint_label.index("/World/Angular")
     start = model.joint_qd_start.numpy()[joint]
     assert model.joint_qd.numpy()[start:start + 2] == pytest.approx([-0.2, np.deg2rad(0.25)])
-    _correct_newton_16_angular_velocity(ref, "/World/Angular", dof=1)
     mismatches = dh.compare_models(ref, dh._model_arrays(model), check_joints=True)
     assert not mismatches, "merged initial-state mismatches vs add_usd:\n  " + "\n  ".join(mismatches)
 
@@ -486,8 +480,6 @@ def _mimic_signatures(model):
 @pytest.mark.parametrize("solver_name", ["mujoco", "featherstone"])
 @pytest.mark.parametrize("rotational", [True, False])
 def test_imported_mimic_is_enforced_by_solver(solver_name, rotational):
-    if solver_name == "featherstone" and not hasattr(newton.ModelBuilder, "set_joint_mimic"):
-        pytest.skip("Newton 1.6 Featherstone does not support mimic constraints")
     usda = MIMIC_SCENE.replace(
         '(prepend apiSchemas = ["PhysicsRigidBodyAPI"]) {}',
         '(prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]) {'
@@ -524,9 +516,6 @@ def test_imported_mimic_is_enforced_by_solver(solver_name, rotational):
     assert result[starts[follower]] == pytest.approx(offset - 2 * result[starts[leader]], abs=2e-3)
 
 
-@pytest.mark.skipif(
-    not hasattr(newton.ModelBuilder, "set_joint_mimic"), reason="Newton 1.6 lacks joint mimic validation"
-)
 def test_newton_joint_mimic_rejects_self_reference():
     usda = MIMIC_SCENE.replace("rel newton:mimicJoint = </World/Leader>", "rel newton:mimicJoint = </World/Follower>")
     with pytest.raises(ovnewton.InvalidPhysicsError, match="/World/Follower:.*cannot mimic itself"):
@@ -784,6 +773,85 @@ def Xform "World" {
     model = _ovstage_model(str(asset), "world-fixed-joint")
     mismatches = dh.compare_models(ref, dh._model_arrays(model), check_joints=True)
     assert not mismatches, "world-fixed-joint mismatches vs add_usd:\n  " + "\n  ".join(mismatches)
+
+
+@pytest.mark.parametrize("body_relation", ["body0", "body1"])
+@pytest.mark.parametrize("articulated", [False, True])
+@pytest.mark.parametrize("import_mode", ["attach", "add"])
+@pytest.mark.parametrize("joint_type", ["Fixed", "Revolute", "Prismatic"])
+def test_static_joint_endpoint_matches_add_usd(tmp_path, body_relation, articulated, import_mode, joint_type):
+    world_relation = "body1" if body_relation == "body0" else "body0"
+    anchors = {body_relation: "(0.1, 0.2, 0.3)", world_relation: "(0.1, 0.2, 0.8)"}
+    root_schema = '(prepend apiSchemas = ["PhysicsArticulationRootAPI"])' if articulated else ""
+    usda = f'''#usda 1.0
+(
+    metersPerUnit = 1
+    upAxis = "Z"
+)
+def Xform "World" {{
+    double3 xformOp:translate = (1, 2, 3)
+    quatd xformOp:orient = (0.9238795325, 0, 0, 0.3826834324)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:orient"]
+    def Cube "Body" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI"]) {{
+        double3 xformOp:translate = (0, 0, 0.5)
+        uniform token[] xformOpOrder = ["xformOp:translate"]
+    }}
+    def Physics{joint_type}Joint "Root" {root_schema} {{
+        rel physics:{body_relation} = </World/Body>
+        rel physics:{world_relation} = </World>
+        point3f physics:localPos0 = {anchors['body0']}
+        point3f physics:localPos1 = {anchors['body1']}
+    }}
+    def Cube "Link" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI"]) {{}}
+    def PhysicsRevoluteJoint "Child" {{
+        rel physics:body0 = </World/Body>
+        rel physics:body1 = </World/Link>
+    }}
+}}
+'''
+    asset = tmp_path / "static-joint-endpoint.usda"
+    asset.write_text(usda, encoding="utf-8")
+    ref = dh.reference_model(str(asset))
+    with wp.ScopedDevice("cpu"), ovstage.Stage("static-joint-endpoint") as stage:
+        population.open_usd_from_string_with_desc(
+            stage, usda, ordinal=1, time=population.DEFAULT_TIME, descs=ovnewton.population_desc()
+        )
+        stage.advance_write_floor(1).wait()
+        if import_mode == "add":
+            builder = newton.ModelBuilder()
+            result = ovnewton.add_ovstage(builder, stage)
+            model = builder.finalize(skip_validation_joints=result.has_orphan_joints)
+            model = ovnewton.attach_ovstage(stage, model=model).model
+        else:
+            model = ovnewton.attach_ovstage(stage).model
+        assert model.joint_count == 2
+        assert model.joint_parent.numpy()[model.joint_label.index("/World/Root")] == -1
+        mismatches = dh.compare_models(
+            ref, dh._model_arrays(model), check_joints=True, check_shapes=True, check_articulations=True
+        )
+        assert not mismatches, "\n".join(mismatches)
+
+
+@pytest.mark.parametrize("target", ["/Missing", "/Body/Anchor", "/Static"])
+def test_joint_endpoint_validation_is_not_bypassed_by_world_fallback(target):
+    body_target = "/Static" if target == "/Static" else "/Body"
+    usda = f'''#usda 1.0
+def Xform "Static" {{}}
+def Cube "Body" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI"]) {{
+    def Xform "Anchor" {{}}
+}}
+def PhysicsFixedJoint "Joint" {{
+    rel physics:body0 = <{target}>
+    rel physics:body1 = <{body_target}>
+}}
+'''
+    with wp.ScopedDevice("cpu"), ovstage.Stage("invalid-joint-endpoint") as stage:
+        population.open_usd_from_string_with_desc(
+            stage, usda, ordinal=1, time=population.DEFAULT_TIME, descs=ovnewton.population_desc()
+        )
+        stage.advance_write_floor(1).wait()
+        with pytest.raises(ovnewton.InvalidPhysicsError, match="joint /Joint"):
+            ovnewton.attach_ovstage(stage)
 
 
 def test_authored_and_orphan_components_match_newton_14(tmp_path):
@@ -1426,20 +1494,6 @@ def Xform "World" {
     model = _ovstage_model_from_string(usda, "nonphysics-point-instancer")
     assert model.body_count == 0
     assert model.shape_count == 0
-
-
-@pytest.mark.parametrize("schema", ("MjcEqualityConnectAPI", "MjcEqualityWeldAPI", "MjcEqualityJointAPI"))
-def test_mujoco_equality_schemas_fail_explicitly(schema):
-    usda = f'''#usda 1.0
-def Xform "World" {{
-    def Xform "Body" (prepend apiSchemas = ["PhysicsRigidBodyAPI"]) {{}}
-    def PhysicsFixedJoint "Equality" (prepend apiSchemas = ["{schema}"]) {{
-        rel physics:body1 = </World/Body>
-    }}
-}}
-'''
-    with pytest.raises(ovnewton.UnsupportedPhysicsError, match=f"unsupported {schema} properties"):
-        _ovstage_model_from_string(usda, f"unsupported-{schema}")
 
 
 def test_non_axis_gravity_is_normalized_and_applied(import_log):
@@ -2943,6 +2997,103 @@ def Xform "World" {
     model = _ovstage_model(str(asset), "filtered-pairs")
     mismatches = dh.compare_models(ref, dh._model_arrays(model), check_joints=False, check_shapes=True)
     assert not mismatches, "filtered-pair mismatches vs add_usd:\n  " + "\n  ".join(mismatches)
+
+
+@pytest.mark.parametrize("import_mode", ["attach", "add"])
+@pytest.mark.parametrize(
+    "enabled_a,enabled_b",
+    [(False, True), (True, False), (False, False)],
+    ids=["source-disabled", "target-disabled", "both-disabled"],
+)
+def test_body_filtered_pairs_allow_disabled_colliders(tmp_path, import_mode, enabled_a, enabled_b):
+    asset = tmp_path / "disabled-body-filters.usda"
+    asset.write_text(f'''#usda 1.0
+(
+    metersPerUnit = 1
+    upAxis = "Z"
+)
+def Xform "A" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI", "PhysicsFilteredPairsAPI"]) {{
+    float physics:mass = 1
+    float3 physics:diagonalInertia = (1, 1, 1)
+    rel physics:filteredPairs = </B>
+    def Cube "Collider" (prepend apiSchemas = ["PhysicsCollisionAPI"]) {{
+        bool physics:collisionEnabled = {str(enabled_a).lower()}
+    }}
+}}
+def Xform "B" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]) {{
+    float physics:mass = 1
+    float3 physics:diagonalInertia = (1, 1, 1)
+    def Cube "Collider" (prepend apiSchemas = ["PhysicsCollisionAPI"]) {{
+        bool physics:collisionEnabled = {str(enabled_b).lower()}
+    }}
+}}
+''', encoding="utf-8")
+    ref = dh.reference_model(str(asset))
+    with wp.ScopedDevice("cpu"), ovstage.Stage("disabled-body-filters") as stage:
+        population.open_usd_with_desc(
+            stage, str(asset), ordinal=1, time=population.DEFAULT_TIME, descs=ovnewton.population_desc()
+        )
+        stage.advance_write_floor(1).wait()
+        if import_mode == "add":
+            builder = newton.ModelBuilder()
+            ovnewton.add_ovstage(builder, stage)
+            model = ovnewton.attach_ovstage(stage, model=builder.finalize()).model
+        else:
+            model = ovnewton.attach_ovstage(stage).model
+        assert model.body_count == 2
+        assert model.shape_count == 2
+        ours = dh._model_arrays(model)
+        assert not dh.compare_models(ref, ours, check_joints=True)
+        # Disabled-shape particle flags and redundant filter-pair storage differ
+        # between importers; compare the shape-collision participation directly.
+        for arrays in (ref, ours):
+            enabled = {
+                path: bool(int(flags) & newton.ShapeFlags.COLLIDE_SHAPES)
+                for path, flags in zip(arrays["shape_label"], arrays["shape_flags"])
+            }
+            assert enabled == {"/A/Collider": enabled_a, "/B/Collider": enabled_b}
+
+
+@pytest.mark.parametrize("import_mode", ["attach", "add"])
+def test_body_filtered_pairs_do_not_include_nested_rigid_bodies(tmp_path, import_mode):
+    asset = tmp_path / "nested-body-filters.usda"
+    asset.write_text('''#usda 1.0
+(
+    metersPerUnit = 1
+    upAxis = "Z"
+)
+def Xform "A" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsFilteredPairsAPI"]) {
+    rel physics:filteredPairs = </B>
+    def Cube "Collider" (prepend apiSchemas = ["PhysicsCollisionAPI"]) {}
+    def Xform "Nested" (prepend apiSchemas = ["PhysicsRigidBodyAPI"]) {
+        uniform token[] xformOpOrder = ["!resetXformStack!"]
+        def Sphere "Collider" (prepend apiSchemas = ["PhysicsCollisionAPI"]) {}
+    }
+}
+def Xform "B" (prepend apiSchemas = ["PhysicsRigidBodyAPI"]) {
+    def Cube "Collider" (prepend apiSchemas = ["PhysicsCollisionAPI"]) {}
+    def Xform "Nested" (prepend apiSchemas = ["PhysicsRigidBodyAPI"]) {
+        uniform token[] xformOpOrder = ["!resetXformStack!"]
+        def Sphere "Collider" (prepend apiSchemas = ["PhysicsCollisionAPI"]) {}
+    }
+}
+''', encoding="utf-8")
+    ref = dh.reference_model(str(asset))
+    with wp.ScopedDevice("cpu"), ovstage.Stage("nested-body-filters") as stage:
+        population.open_usd_with_desc(
+            stage, str(asset), ordinal=1, time=population.DEFAULT_TIME, descs=ovnewton.population_desc()
+        )
+        stage.advance_write_floor(1).wait()
+        if import_mode == "add":
+            builder = newton.ModelBuilder()
+            ovnewton.add_ovstage(builder, stage)
+            model = ovnewton.attach_ovstage(stage, model=builder.finalize()).model
+        else:
+            model = ovnewton.attach_ovstage(stage).model
+        pairs = {tuple(sorted((model.shape_label[a], model.shape_label[b])))
+                 for a, b in model.shape_collision_filter_pairs}
+        assert pairs == {("/A/Collider", "/B/Collider")}
+        assert not dh.compare_models(ref, dh._model_arrays(model), check_joints=True, check_shapes=True)
 
 
 @pytest.mark.parametrize("attribute", ["breakForce", "breakTorque"])

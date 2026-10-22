@@ -35,8 +35,10 @@ class AssetCase:
 PINNED_ASSET_CASES = (
     AssetCase("anymal_c", "anybotics_anymal_c", "usd/anymal_c.usda", "native-instancing"),
     AssetCase("anymal_d", "anybotics_anymal_d", "usd/anymal_d.usda", "native-instancing"),
-    AssetCase("apptronik_apollo", "apptronik_apollo", "usd_structured/apptronik_apollo.usda", "mjc"),
-    AssetCase("booster_t1", "booster_t1", "usd_structured/T1.usda", "mjc"),
+    AssetCase(
+        "apptronik_apollo", "apptronik_apollo", "usd_structured/apptronik_apollo.usda", "mjc-actuator-force-range"
+    ),
+    AssetCase("booster_t1", "booster_t1", "usd_structured/T1.usda", "mjc-actuator-force-range"),
     AssetCase("dr_legs", "disneyresearch", "dr_legs/usd/dr_legs.usda", "match"),
     AssetCase("dr_legs_boxes", "disneyresearch", "dr_legs/usd/dr_legs_with_boxes.usda", "match"),
     AssetCase(
@@ -46,8 +48,8 @@ PINNED_ASSET_CASES = (
         "match",
     ),
     AssetCase("dr_testmech", "disneyresearch", "dr_testmech/usd/dr_testmech.usda", "rootless-floor-drift"),
-    AssetCase("robotiq_2f85", "robotiq_2f85_v4", "usd_structured/Dual_wrist_camera.usda", "mjc"),
-    AssetCase("shadow_hand", "shadow_hand", "usd_structured/left_shadow_hand.usda", "mjc"),
+    AssetCase("robotiq_2f85", "robotiq_2f85_v4", "usd_structured/Dual_wrist_camera.usda", "mjc-solver-registration"),
+    AssetCase("shadow_hand", "shadow_hand", "usd_structured/left_shadow_hand.usda", "match"),
     AssetCase("unitree_g1", "unitree_g1", "usd/g1.usd", "native-instancing"),
     AssetCase("unitree_g1_hands", "unitree_g1", "usd/g1_29dof_with_hand_rev_1_0.usd", "match"),
     AssetCase("unitree_g1_isaac", "unitree_g1", "usd/g1_isaac.usd", "native-instancing"),
@@ -56,20 +58,20 @@ PINNED_ASSET_CASES = (
         "unitree_g1_structured",
         "unitree_g1",
         "usd_structured/g1_29dof_with_hand_rev_1_0.usda",
-        "mjc",
+        "mjc-actuator-force-range",
     ),
     AssetCase("unitree_go2", "unitree_go2", "usd/go2.usda", "native-instancing"),
     AssetCase("unitree_h1_minimal", "unitree_h1", "usd/h1_minimal.usda", "native-instancing"),
-    AssetCase("unitree_h1_structured", "unitree_h1", "usd_structured/h1.usda", "mjc"),
+    AssetCase("unitree_h1_structured", "unitree_h1", "usd_structured/h1.usda", "match"),
     AssetCase("ur10_instanceable", "universal_robots_ur10", "usd/ur10_instanceable.usda", "match"),
-    AssetCase("ur5e", "universal_robots_ur5e", "usd_structured/ur5e.usda", "mjc"),
+    AssetCase("ur5e", "universal_robots_ur5e", "usd_structured/ur5e.usda", "match"),
     AssetCase(
         "wonik_allegro",
         "wonik_allegro",
         "usd/allegro_left_hand_with_cube.usda",
         "native-instancing",
     ),
-    AssetCase("wonik_allegro_structured", "wonik_allegro", "usd_structured/allegro_left.usda", "mjc"),
+    AssetCase("wonik_allegro_structured", "wonik_allegro", "usd_structured/allegro_left.usda", "match"),
 )
 
 LATEST_ASSET_CASES = PINNED_ASSET_CASES + (
@@ -111,7 +113,7 @@ def _worker(
     import ovstage
     from ovstage import PopulationDomain, population
 
-    from ovnewton._src import _build
+    import ovnewton
 
     ref = ours = None
     ref_error = ours_error = None
@@ -124,10 +126,14 @@ def _worker(
         ref_error = _error(exc)
 
     try:
-        with ovstage.Stage(f"asset-diff-{name}") as stage, ovstage.PathDictionary(stage) as pd:
-            population.open_usd(stage, str(asset), ordinal=1, domains=PopulationDomain.ALL)
+        ovnewton.register_usd_schemas()
+        with ovstage.Stage(f"asset-diff-{name}") as stage:
+            population.open_usd_with_desc(
+                stage, str(asset), ordinal=1, time=population.DEFAULT_TIME,
+                descs=(population.Desc(domains=PopulationDomain.ALL), ovnewton.population_desc()),
+            )
             stage.advance_write_floor(ordinal=1).wait()
-            model = _build.build_model(stage, pd, ordinal=1)
+            model = ovnewton.attach_ovstage(stage).model
             ours = dh._model_arrays(model)
     except Exception as exc:
         ours_error = _error(exc)
@@ -247,19 +253,28 @@ def _matches_expectation(case: AssetCase, result: dict[str, object]) -> bool:
             and "native USD" in message
             and "instancing" in message
         )
-    if case.expectation == "mjc":
-        if ours.get("type") != "UnsupportedPhysicsError" or "MjcJointAPI" not in message:
-            return False
-        if outcome == "ovnewton-error":
-            return True
-        reference = result.get("reference_error") or {}
-        return outcome == "both-error" and "No module named 'mujoco'" in str(reference.get("message", ""))
+    if case.expectation == "mjc-actuator-force-range":
+        return (
+            outcome == "ovnewton-error"
+            and ours.get("type") == "UnsupportedPhysicsError"
+            and message.startswith((
+                "unsupported mjc:actuatorfrcrange:min at ",
+                "unsupported mjc:actuatorfrcrange:max at ",
+            ))
+        )
     if case.expectation == "rootless-floor-drift":
         return outcome == "match" or (
             outcome == "mismatch"
             and len(mismatches) == 2
             and any(".joint_articulation:" in str(item) for item in mismatches)
             and any(str(item).startswith("articulation count:") for item in mismatches)
+        )
+    if case.expectation == "mjc-solver-registration":
+        return (
+            outcome == "ovnewton-error"
+            and ours.get("type") == "UnsupportedPhysicsError"
+            and message.startswith("mjc:solreflimit at ")
+            and message.endswith("requires SolverMuJoCo.register_custom_attributes(builder) before add_ovstage")
         )
     raise ValueError(f"unknown expectation: {case.expectation}")
 

@@ -59,7 +59,7 @@ Only `ObjectScope.ALL` is supported. It is a reusable topology snapshot that rem
 
 ## Native output contract
 
-Native fields return values as Newton stores them, with the same units, frames, component order, and meaning. The shared `jointPosition` and `jointVelocity` fields convert angular axes to degrees and degrees per second. See Newton's [State API](https://newton-physics.github.io/newton/1.6.0/api/_generated/newton.State.html), [conventions](https://newton-physics.github.io/newton/1.6.0/concepts/conventions.html), and [articulation model](https://newton-physics.github.io/newton/1.6.0/concepts/articulations.html) for details.
+Native fields return values as Newton stores them, with the same units, frames, component order, and meaning. The shared `jointPosition` and `jointVelocity` fields convert angular axes to degrees and degrees per second. See Newton's [State API](https://newton-physics.github.io/newton/1.7.0/api/_generated/newton.State.html), [conventions](https://newton-physics.github.io/newton/1.7.0/concepts/conventions.html), and [articulation model](https://newton-physics.github.io/newton/1.7.0/concepts/articulations.html) for details.
 
 | Attribute | Object | Ovnewton group layout |
 | --- | --- | --- |

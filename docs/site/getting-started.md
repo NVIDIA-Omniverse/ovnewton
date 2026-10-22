@@ -68,9 +68,26 @@ python -m ovnewton.examples.example_ovnewton_robot
 python -m ovnewton.examples.example_ovnewton_robot --solver vbd
 ```
 
+OVRTX debug synchronization is disabled by default. Use `--render-debug-sync true`
+for diagnostics, or `--render-debug-sync false` to explicitly use the default:
+
+```console
+python -m ovnewton.examples.example_ovnewton_basic --render-debug-sync false
+python -m ovnewton.examples.example_ovnewton_robot --render-debug-sync true
+```
+
+Rendering remains blocking with debug synchronization disabled and preserves
+the simulate → publish → seal → render order. For the basic example,
+`--no-render` makes the option irrelevant. To measure its effect, compare the
+same workload without `--timing`, which adds separate synchronization.
+
 ## Run a simulation
 
 The `scene_path` below must point to a USD file supplied by your application.
+
+Use `ovnewton.population_desc()` to select physics data and preserve composed
+schema names, including unregistered APIs. Combine it with a rendering descriptor
+as below, or use it alone for physics. Register schemas before population.
 
 ```python
 import newton
@@ -82,7 +99,10 @@ scene_path = "/path/to/scene.usd"
 
 ovnewton.register_usd_schemas()
 stage = ovstage.Stage()
-population.open_usd(stage, scene_path, ordinal=1, domains=PopulationDomain.ALL)
+population.open_usd_with_desc(
+    stage, scene_path, ordinal=1, time=population.DEFAULT_TIME,
+    descs=(population.Desc(domains=PopulationDomain.RENDERING), ovnewton.population_desc()),
+)
 stage.advance_write_floor(ordinal=1).wait()
 
 builder = newton.ModelBuilder()
@@ -98,13 +118,15 @@ collision_pipeline = newton.CollisionPipeline(model)
 contacts = collision_pipeline.contacts()
 
 num_substeps = 4
+collide_every_substep = False
 dt = 1.0 / (60 * num_substeps)
 ordinal = 2
 
 for _ in range(240):
-    for _ in range(num_substeps):
+    for substep in range(num_substeps):
         state_0.clear_forces()
-        collision_pipeline.collide(state_0, contacts)
+        if collide_every_substep or substep == 0:
+            collision_pipeline.collide(state_0, contacts)
         solver.step(state_0, state_1, control, contacts, dt)
         state_0, state_1 = state_1, state_0
 
@@ -113,7 +135,53 @@ for _ in range(240):
     ordinal += 1
 ```
 
-Call `binding.update_from_ovstage(state_0, control)` before a step to apply all supported state and drive target fields from sealed stage changes. This updates both `state_0` and `control`; callers cannot select a subset. If you supply `model=`, its body and joint labels must match the stage paths.
+This loop generates contacts once per frame by default. Set
+`collide_every_substep = True` to refresh contacts before every solver substep,
+for example when debugging contact behavior or simulating fast motion. Reusing
+contacts reduces collision work, but contacts can become stale between substeps;
+check that the chosen cadence preserves the behavior your scene needs. This
+controls the external `CollisionPipeline`, not a solver's internal collision
+handling. See Newton's [collision-frequency guidance](https://newton-physics.github.io/newton/latest/concepts/collisions.html#collision-frequency-in-the-simulation-loop).
+
+Call `binding.update_from_ovstage(state_0, control)` before a step when you intend
+to resynchronize all supported state and drive targets from the sealed stage.
+The default applies current stage values even if they predate the live simulation
+state. For a controller that only changes drive targets, select those fields:
+
+```python
+binding.update_from_ovstage(
+    state_0, control,
+    attributes=("jointPositionTarget", "jointVelocityTarget"),
+)
+```
+
+Either target name can be selected alone. This leaves every state array and
+unselected control array unchanged. The same selection mechanism supports:
+
+| Field | Destination |
+| --- | --- |
+| `body_q` | All bound body poses |
+| `body_qd` | All bound body linear/angular velocities |
+| `jointPosition` / `jointVelocity` | Existing single-DOF joint coordinates / velocities |
+| `jointPositionTarget` / `jointVelocityTarget` | Existing single-DOF drive targets |
+
+Fields can be combined in one read. Explicit selections update only the listed
+fields and preserve unmapped joint coordinates. They do not run forward/inverse
+kinematics to reconcile body and joint arrays; use the default full resync when
+body-derived joint coordinates must also be reconstructed. Selection does not
+add path filtering, D6 drive channels, or teleport/kinematic-target handling.
+Angular joint values convert from stage degrees to Newton radians; linear values
+use the stage's length units. The active drive mode determines which target
+columns are required. A missing required selected column or inconsistent snapshot
+fails before committing any selected state or control changes. An empty selection
+reads no payloads.
+
+If you supply `model=`, its body and joint labels must match the stage paths.
+
+Already-populated stages must preserve the same schema metadata. `add_ovstage()`
+and `attach_ovstage()` do not reconstruct discarded names, so unsupported-physics
+detection requires this descriptor or equivalent population. Preserving a schema
+name does not add support for its semantics.
 
 ## Configure a solver-specific model
 

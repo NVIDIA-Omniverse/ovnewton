@@ -3,14 +3,64 @@
 
 import json
 import subprocess
+import sys
 
 import pytest
 
 from . import newton_assets_diff as nad
 
 
+def test_cli_registers_newton_schemas_before_population(tmp_path):
+    asset = tmp_path / "disneyresearch/dr_legs/usd/dr_legs.usda"
+    asset.parent.mkdir(parents=True)
+    asset.write_text('''#usda 1.0
+(
+    metersPerUnit = 1
+    upAxis = "Z"
+)
+def Xform "Body" (prepend apiSchemas = ["PhysicsRigidBodyAPI"]) {
+    def Cube "Collider" (prepend apiSchemas = ["PhysicsCollisionAPI", "NewtonCollisionAPI"]) {
+        float newton:contactGap = 0
+    }
+    def Sphere "Site" (prepend apiSchemas = ["NewtonSiteAPI"]) {}
+}
+''', encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, nad.__file__, "--asset-root", str(tmp_path), "--asset", "dr_legs", "--strict"],
+        capture_output=True, text=True, timeout=60,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "summary: match=1" in result.stdout
+
+
 def _case(expectation):
     return nad.AssetCase("case", "folder", "scene.usda", expectation)
+
+
+def test_cli_records_mujoco_solver_registration_requirement(tmp_path):
+    pytest.importorskip("mujoco")
+    asset = tmp_path / "robotiq_2f85_v4/usd_structured/Dual_wrist_camera.usda"
+    asset.parent.mkdir(parents=True)
+    asset.write_text('''#usda 1.0
+(
+    metersPerUnit = 1
+    upAxis = "Z"
+)
+def Cube "Body" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI"]) {}
+def PhysicsRevoluteJoint "Joint" (prepend apiSchemas = ["MjcJointAPI"]) {
+    rel physics:body1 = </Body>
+    double[] mjc:solreflimit = [0.04, 0.8]
+    double mjc:armature = 0.2
+    double mjc:damping = 3
+}
+''', encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, nad.__file__, "--asset-root", str(tmp_path), "--asset", "robotiq_2f85", "--strict"],
+        capture_output=True, text=True, timeout=60,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "summary: ovnewton-error=1" in result.stdout
+    assert "requires SolverMuJoCo.register_custom_attributes(builder) before add_ovstage" in result.stdout
 
 
 def test_source_environment_limits_pxr_workers(monkeypatch):
@@ -63,14 +113,25 @@ def test_native_instancing_requires_successful_reference():
     )
 
 
-def test_mjc_allows_only_its_known_reference_dependency_error():
-    ours = {"type": "UnsupportedPhysicsError", "message": "unsupported MjcJointAPI properties at /Joint"}
-    base = {"outcome": "both-error", "ovnewton_error": ours}
-    assert nad._matches_expectation(
-        _case("mjc"),
-        {**base, "reference_error": {"message": "ModuleNotFoundError: No module named 'mujoco'"}},
+@pytest.mark.parametrize("property_line,expected", [
+    ("double mjc:actuatorfrcrange:min = -1", True),
+    ("double[] mjc:springdamper = [0.1, 1]", False),
+    ("double mjc:armature = -1", False),
+])
+def test_cli_accepts_only_the_recorded_mjc_limitation(tmp_path, property_line, expected):
+    pytest.importorskip("mujoco")
+    asset = tmp_path / "apptronik_apollo/usd_structured/apptronik_apollo.usda"
+    asset.parent.mkdir(parents=True)
+    asset.write_text(f'''#usda 1.0
+def Cube "Body" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI"]) {{}}
+def PhysicsRevoluteJoint "Joint" (prepend apiSchemas = ["MjcJointAPI"]) {{
+    rel physics:body1 = </Body>
+    {property_line}
+}}
+''', encoding="utf-8")
+    result = subprocess.run(
+        [sys.executable, nad.__file__, "--asset-root", str(tmp_path), "--asset", "apptronik_apollo", "--strict"],
+        capture_output=True, text=True, timeout=60,
     )
-    assert not nad._matches_expectation(
-        _case("mjc"),
-        {**base, "reference_error": {"message": "unexpected reference failure"}},
-    )
+    assert result.returncode == (0 if expected else 1), result.stdout + result.stderr
+    assert "summary: ovnewton-error=1" in result.stdout

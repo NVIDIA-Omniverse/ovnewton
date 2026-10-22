@@ -15,7 +15,7 @@ RESET_XFORM_STACK = "omni:resetXformStack"
 USD_PATH = "usd-path"
 USD_PRIM_TYPE = "usd-prim-type"
 
-def find_paths_by_type(stage, prim_type, ordinal=1):
+def find_paths_by_type(stage, prim_type, ordinal):
     """Sorted paths of every prim of ``prim_type`` (e.g. ``"Camera"``)."""
     found = set()
     with ovstage.PathDictionary(stage) as pd:
@@ -31,11 +31,9 @@ def find_paths_by_type(stage, prim_type, ordinal=1):
                 query, [token], ovstage.OrdinalRange.latest(ordinal)
             ) as read:
                 read.wait()
-                group = read.fetch_next()
-                while group is not None:
-                    found.update(pd.get_path_strings(group.prim_list))
-                    stage.release_group(group)
-                    group = read.fetch_next()
+                for group in read.groups():
+                    with group:
+                        found.update(pd.get_path_strings(group.prim_list))
     return sorted(found)
 
 
@@ -46,16 +44,17 @@ class TransformRelay:
     go through one query, so the two are always consistent with each other.
     """
 
-    def __init__(self, stage, paths):
+    def __init__(self, stage, paths, *, ordinal):
+        paths = list(paths)
         self._stage = stage
-        self._count = len(list(paths))
+        self._count = len(paths)
         self._pd = ovstage.PathDictionary(stage)
-        self._path_list = self._pd.create_path_list_from_strings(list(paths))
+        self._path_list = self._pd.create_path_list_from_strings(paths)
         self._query = stage.query_from_path_list(self._path_list)
         self._world_matrix = self._pd.intern_token(WORLD_MATRIX)
         self._xform = self._pd.intern_token(XFORM)
         self._dtype = ovstage.numpy_to_dldatatype(np.dtype(np.float64), lanes=16)
-        self._scales = self._signed_scales(self.read(1))
+        self._scales = self._signed_scales(self.read(ordinal))
         self._reset_written = False
 
     @staticmethod
@@ -74,13 +73,11 @@ class TransformRelay:
             self._query, [self._world_matrix], ovstage.OrdinalRange.latest(ordinal)
         ) as read:
             read.wait()
-            group = read.fetch_next()
-            while group is not None:
-                rows = np.from_dlpack(group.dlpack(0)).reshape(-1, 4, 4)
-                for local in range(group.prim_count):
-                    out[group.prim_index(local)] = rows[local]
-                self._stage.release_group(group)
-                group = read.fetch_next()
+            for group in read.groups():
+                with group:
+                    rows = np.from_dlpack(group.dlpack(0)).reshape(-1, 4, 4)
+                    for local in range(group.prim_count):
+                        out[group.prim_index(local)] = rows[group.data_row_index(local)]
         return out
 
     def write(self, matrices, ordinal):

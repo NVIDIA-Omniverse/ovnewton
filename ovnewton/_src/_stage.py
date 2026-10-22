@@ -9,7 +9,7 @@ from contextlib import contextmanager
 from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
-from ovstage import OrdinalRange
+from ovstage import ErrorCode, OrdinalRange, OvstageError
 
 from ._errors import OvstageContractError
 from ._schema_names import USD_PATH
@@ -28,6 +28,16 @@ def _validate_payload_ordinal(group: Any, requested_ordinal: int, subject: str) 
             f"{subject} returned payload ordinal {actual} newer than requested ordinal {requested}; "
             "ovstage does not retain historical payloads"
         )
+
+
+def _wait_for_read(read: Any, ordinal: int) -> None:
+    """Keep unavailable snapshots under ovnewton's read-contract error type."""
+    try:
+        read.wait()
+    except OvstageError as exc:
+        if exc.code != ErrorCode.OUT_OF_RANGE:
+            raise
+        raise OvstageContractError(f"ovstage cannot provide the requested ordinal {ordinal}: {exc}") from exc
 
 
 def _global_write_floor(stage: Any) -> int:
@@ -67,7 +77,7 @@ def _consume_column_group(rows: Dict[int, np.ndarray], group: Any, attr: str, *,
                 raise OvstageContractError(
                     f"attribute {attr!r} returned ragged row {tensor_index} outside [0, {group.tensor_count})"
                 )
-            rows[group.prim_index(local)] = np.array(group.array(tensor_index), copy=True)
+            rows[group.prim_index(local)] = np.array(group.array(tensor_index), copy=True).reshape(-1)
         return
     if not ragged and group.tensor_count not in (0, 1):
         raise OvstageContractError(
@@ -77,19 +87,17 @@ def _consume_column_group(rows: Dict[int, np.ndarray], group: Any, attr: str, *,
         return
 
     arr = np.asarray(group.array(0))
-    if group.has_data_index_map:
-        tensor = group.tensor(0)
-        nrows = int(tensor.shape[0]) if int(tensor.ndim) >= 1 else group.prim_count
-    else:
-        nrows = group.prim_count
-    if nrows <= 0 or arr.size % nrows:
-        raise OvstageContractError(f"fixed attribute {attr!r} has {arr.size} values for {nrows} logical rows")
-    width = arr.size // nrows
+    if arr.ndim == 0:
+        raise OvstageContractError(f"fixed attribute {attr!r} must have a row axis")
+    nrows = arr.shape[0]
+    if nrows <= 0 or (not group.has_data_index_map and nrows != group.prim_count):
+        raise OvstageContractError(f"fixed attribute {attr!r} has {nrows} rows for {group.prim_count} prims")
     for local in range(group.prim_count):
         row = group.data_row_index(local)
         if row < 0 or row >= nrows:
             raise OvstageContractError(f"fixed attribute {attr!r} returned row {row} outside [0, {nrows})")
-        rows[group.prim_index(local)] = np.array(arr[row * width : (row + 1) * width])
+        # The importer consumes flat rows, including for vector and matrix attributes.
+        rows[group.prim_index(local)] = np.array(arr[row], copy=True).reshape(-1)
 
 
 def read_columns(
@@ -101,7 +109,11 @@ def read_columns(
     *,
     ragged: Sequence[str] = (),
 ) -> Dict[str, Dict[int, np.ndarray]]:
-    """Read fixed and ragged columns in one ovstage operation."""
+    """Read fixed and ragged columns in one ovstage operation.
+
+    Ragged-capable columns also accept fixed-size vectors; the result group's
+    public ``is_array`` flag determines their actual row layout.
+    """
     attrs = tuple(attrs)
     if len(attrs) != len(set(attrs)):
         raise ValueError("column read contains duplicate attributes")
@@ -117,7 +129,7 @@ def read_columns(
     if len(token_to_attr) != len(attrs):
         raise OvstageContractError("column names resolved to duplicate ovstage tokens")
     with stage.read_attributes(query, list(token_to_attr), OrdinalRange.latest(ordinal)) as read:
-        read.wait()
+        _wait_for_read(read, ordinal)
         group = read.fetch_next()
         while group is not None:
             try:
@@ -125,7 +137,7 @@ def read_columns(
                 if attr is None:
                     raise OvstageContractError(f"column read returned unexpected attribute token {group.attribute}")
                 _validate_payload_ordinal(group, ordinal, f"attribute {attr!r}")
-                _consume_column_group(rows[attr], group, attr, ragged=attr in ragged_attrs)
+                _consume_column_group(rows[attr], group, attr, ragged=attr in ragged_attrs and group.is_array)
             finally:
                 stage.release_group(group)
             group = read.fetch_next()
@@ -152,7 +164,7 @@ def _read_path_columns(
     token_to_attr = {pd.intern_token(attr): attr for attr in attrs}
     columns: Dict[str, Dict[str, str]] = {attr: {} for attr in attrs}
     with stage.read_attributes(query, list(token_to_attr), OrdinalRange.latest(ordinal)) as read:
-        read.wait()
+        _wait_for_read(read, ordinal)
         group = read.fetch_next()
         while group is not None:
             try:
@@ -162,9 +174,7 @@ def _read_path_columns(
                 _validate_payload_ordinal(group, ordinal, f"attribute {attr!r}")
                 rows: Dict[int, np.ndarray] = {}
                 _consume_column_group(rows, group, attr, ragged=False)
-                if not rows:
-                    continue
-                group_paths = pd.get_path_strings(group.prim_list)
+                group_paths = pd.get_path_strings(group.prim_list) if rows else []
                 for prim_index, row in rows.items():
                     if prim_index < 0 or prim_index >= len(group_paths):
                         raise OvstageContractError(

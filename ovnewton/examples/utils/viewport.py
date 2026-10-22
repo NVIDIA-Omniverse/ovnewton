@@ -23,7 +23,7 @@ frames needs only ``pyglet`` (installed with the ``examples`` extra) and
     vp.close()
 
 Passing ``stage`` also enables the interactive fly camera: the viewport finds
-the scene's Camera prim, starts from the transform authored in USD, and
+the scene's Camera prim, starts from its transform at the sealed ``ordinal``, and
 publishes its own moves back to ovstage. That path imports ovstage (a core
 ovnewton dependency) lazily, so a viewport built without a stage still needs
 nothing beyond pyglet and warp. ``FlyCamera`` holds the camera state and math
@@ -64,12 +64,13 @@ class GLViewport:
     """pyglet window presenting CUDA RGBA8 frames via Warp GL interop.
 
     Pass ``stage`` to enable the interactive fly camera: the viewport finds the
-    scene's Camera prim, starts from the transform authored in USD, and
+    scene's Camera prim, starts from its transform at the sealed ``ordinal``, and
     publishes its own moves back to ovstage (see :meth:`update_camera`).
+    If ``ordinal`` is omitted, use the stage's current sealed write floor.
     """
 
     def __init__(self, title: str = "ovnewton", width: int = 1280, height: int = 720,
-                 vsync: bool = False, stage=None):
+                 vsync: bool = False, stage=None, ordinal=None):
         import pyglet
 
         pyglet.options["debug_gl"] = False
@@ -139,11 +140,14 @@ class GLViewport:
         if stage is not None:
             from .transform_relay import TransformRelay, find_paths_by_type
 
-            camera_paths = find_paths_by_type(stage, "Camera", ordinal=1)
+            if ordinal is None:
+                with stage.get_attribute_write_floor() as query:
+                    ordinal = int(query.fetch())
+            camera_paths = find_paths_by_type(stage, "Camera", ordinal=ordinal)
             if camera_paths:
-                self._camera_relay = TransformRelay(stage, camera_paths[:1])
-                # Start from the pose the scene authored in USD.
-                self.camera = FlyCamera.from_world_matrix(self._camera_relay.read(1)[0])
+                self._camera_relay = TransformRelay(stage, camera_paths[:1], ordinal=ordinal)
+                # Start from the current sealed camera pose.
+                self.camera = FlyCamera.from_world_matrix(self._camera_relay.read(ordinal)[0])
                 print(f"camera: {camera_paths[0]} — WASD/arrows fly, Q/E down/up, "
                       "left-drag look, SHIFT boost")
 

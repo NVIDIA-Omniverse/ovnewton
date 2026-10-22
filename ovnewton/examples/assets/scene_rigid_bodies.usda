@@ -46,7 +46,7 @@ def Xform "World" (
     }
 
     # ── Cube stack (x = -4.5) ────────────────────────────────────────
-    def Cube "Cube_0" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI"])
+    def Cube "Cube_0" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI", "PhysicsMassAPI"])
     {
         double size = 1.0
         double3 xformOp:translate = (-4.5, 0, 0.8)
@@ -55,7 +55,7 @@ def Xform "World" (
         float physics:mass = 1.0
         color3f[] primvars:displayColor = [(0.9, 0.35, 0.25)]
     }
-    def Cube "Cube_1" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI"])
+    def Cube "Cube_1" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI", "PhysicsMassAPI"])
     {
         double size = 1.0
         double3 xformOp:translate = (-4.2, 0.12, 2.1)
@@ -64,7 +64,7 @@ def Xform "World" (
         float physics:mass = 1.0
         color3f[] primvars:displayColor = [(0.9, 0.45, 0.3)]
     }
-    def Cube "Cube_2" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI"])
+    def Cube "Cube_2" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI", "PhysicsMassAPI"])
     {
         double size = 1.0
         double3 xformOp:translate = (-4.75, -0.28, 3.4)
@@ -75,7 +75,7 @@ def Xform "World" (
     }
 
     # ── Sphere stack (x = -1.5) ──────────────────────────────────────
-    def Sphere "Sphere_0" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI"])
+    def Sphere "Sphere_0" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI", "PhysicsMassAPI"])
     {
         double radius = 0.5
         double3 xformOp:translate = (-1.5, 0, 0.8)
@@ -84,7 +84,7 @@ def Xform "World" (
         float physics:mass = 1.0
         color3f[] primvars:displayColor = [(0.2, 0.5, 0.95)]
     }
-    def Sphere "Sphere_1" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI"])
+    def Sphere "Sphere_1" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI", "PhysicsMassAPI"])
     {
         double radius = 0.5
         double3 xformOp:translate = (-1.2, 0.12, 2.1)
@@ -93,7 +93,7 @@ def Xform "World" (
         float physics:mass = 1.0
         color3f[] primvars:displayColor = [(0.3, 0.6, 1.0)]
     }
-    def Sphere "Sphere_2" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI"])
+    def Sphere "Sphere_2" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI", "PhysicsMassAPI"])
     {
         double radius = 0.5
         double3 xformOp:translate = (-1.75, -0.28, 3.4)
@@ -104,7 +104,7 @@ def Xform "World" (
     }
 
     # ── Capsule stack (x = 1.5), Z axis ──────────────────────────────
-    def Capsule "Capsule_0" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI"])
+    def Capsule "Capsule_0" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI", "PhysicsMassAPI"])
     {
         uniform token axis = "Z"
         double radius = 0.3
@@ -115,7 +115,7 @@ def Xform "World" (
         float physics:mass = 1.0
         color3f[] primvars:displayColor = [(0.3, 0.8, 0.4)]
     }
-    def Capsule "Capsule_1" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI"])
+    def Capsule "Capsule_1" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI", "PhysicsMassAPI"])
     {
         uniform token axis = "Z"
         double radius = 0.3
@@ -126,7 +126,7 @@ def Xform "World" (
         float physics:mass = 1.0
         color3f[] primvars:displayColor = [(0.4, 0.85, 0.5)]
     }
-    def Capsule "Capsule_2" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI"])
+    def Capsule "Capsule_2" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI", "PhysicsMassAPI"])
     {
         uniform token axis = "Z"
         double radius = 0.3
@@ -139,7 +139,7 @@ def Xform "World" (
     }
 
     # ── Cylinder stack (x = 4.5), Z axis ─────────────────────────────
-    def Cylinder "Cylinder_0" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI"])
+    def Cylinder "Cylinder_0" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI", "PhysicsMassAPI"])
     {
         uniform token axis = "Z"
         double radius = 0.4
@@ -150,7 +150,7 @@ def Xform "World" (
         float physics:mass = 1.0
         color3f[] primvars:displayColor = [(0.95, 0.8, 0.3)]
     }
-    def Cylinder "Cylinder_1" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI"])
+    def Cylinder "Cylinder_1" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI", "PhysicsMassAPI"])
     {
         uniform token axis = "Z"
         double radius = 0.4
@@ -161,7 +161,7 @@ def Xform "World" (
         float physics:mass = 1.0
         color3f[] primvars:displayColor = [(0.95, 0.85, 0.45)]
     }
-    def Cylinder "Cylinder_2" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI"])
+    def Cylinder "Cylinder_2" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI", "PhysicsMassAPI"])
     {
         uniform token axis = "Z"
         double radius = 0.4

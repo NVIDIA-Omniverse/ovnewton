@@ -10,6 +10,8 @@ Since the decode is independently validated against ``add_usd`` (test_diff),
 ``encode → write → read → decode == identity`` pins the write transport.
 """
 
+import ctypes
+
 import numpy as np
 import ovstage
 import pytest
@@ -20,7 +22,7 @@ from ovnewton._src import _build, _runtime, _stage
 from ovnewton._src._errors import OvstageContractError
 from ovnewton.examples import get_asset
 
-from .runtime_helpers import lanes_tensor, read_body_state
+from .runtime_helpers import read_body_state
 
 CARTPOLE = get_asset("scene_cartpole.usda")
 
@@ -51,18 +53,73 @@ def Xform "Body" (prepend apiSchemas = ["PhysicsRigidBodyAPI"]) {
     np.testing.assert_allclose(scale, [[-2.0, -3.0, -4.0]])
 
 
-def test_runtime_tensor_contract_rejects_wrong_type_lanes_and_rank():
+@pytest.mark.parametrize("components,lanes", [((), 1), ((3,), 3), ((4, 4), 16)])
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+@pytest.mark.parametrize("explicit_strides", [False, True])
+def test_runtime_scalar_component_tensor_aliases_rows(components, lanes, dtype, explicit_strides):
     import warp as wp
 
-    tensor = lanes_tensor(np.zeros((1, 3), dtype=np.float32), lanes=3)
-    with pytest.raises(OvstageContractError, match="expected float64x3"):
-        _runtime._tensor_source_view(tensor, dtype=wp.float64, lanes=3)
-    with pytest.raises(OvstageContractError, match="expected float32x1"):
-        _runtime._tensor_source_view(tensor, dtype=wp.float32, lanes=1)
+    values = np.arange(2 * lanes, dtype=dtype).reshape((2, *components))
+    tensor = ovstage.make_dltensor(values)
+    if explicit_strides:
+        strides = (ctypes.c_int64 * values.ndim)(*(stride // values.itemsize for stride in values.strides))
+        tensor.strides = strides
+    else:
+        tensor.strides = None
+    alias, device = _runtime._tensor_source_view(
+        tensor, dtype=wp.float64 if dtype == np.float64 else wp.float32, lanes=lanes
+    )
+    assert alias.ptr == values.ctypes.data
+    assert device == wp.get_device("cpu")
+    np.testing.assert_array_equal(alias.numpy(), values.reshape(-1))
 
-    tensor.ndim = 2
-    with pytest.raises(OvstageContractError, match="one-dimensional"):
+
+@pytest.mark.parametrize("lanes", [3, 16])
+def test_runtime_tensor_contract_rejects_lane_packed_reads(lanes):
+    import warp as wp
+
+    values = np.zeros((2, lanes), dtype=np.float32)
+    tensor = ovstage.make_dltensor(
+        values,
+        dtype=ovstage.DLDataType(code=ovstage.DLDataTypeCode.kDLFloat, bits=32, lanes=lanes),
+        shape=[2],
+        ndim=1,
+    )
+    with pytest.raises(OvstageContractError, match="expected scalar float32"):
+        _runtime._tensor_source_view(tensor, dtype=wp.float32, lanes=lanes)
+
+
+@pytest.mark.parametrize("dtype", [np.int32, np.float64])
+def test_runtime_tensor_contract_rejects_wrong_scalar_type(dtype):
+    import warp as wp
+
+    tensor = ovstage.make_dltensor(np.zeros((2, 3), dtype=dtype))
+    with pytest.raises(OvstageContractError, match="expected scalar float32"):
         _runtime._tensor_source_view(tensor, dtype=wp.float32, lanes=3)
+
+
+@pytest.mark.parametrize(
+    "shape,lanes",
+    [((2, 1), 1), ((6,), 3), ((2, 2), 3), ((2, 1, 3), 3), ((2, 16), 16), ((2, 2, 8), 16)],
+)
+def test_runtime_tensor_contract_rejects_wrong_component_shape(shape, lanes):
+    import warp as wp
+
+    tensor = ovstage.make_dltensor(np.zeros(shape, dtype=np.float32))
+    with pytest.raises(OvstageContractError, match="component shape"):
+        _runtime._tensor_source_view(tensor, dtype=wp.float32, lanes=lanes)
+
+
+@pytest.mark.parametrize("axis", [0, 1, 2])
+def test_runtime_tensor_contract_rejects_strided_components(axis):
+    import warp as wp
+
+    tensor = ovstage.make_dltensor(np.zeros((2, 4, 4), dtype=np.float64))
+    strides = (ctypes.c_int64 * 3)(16, 4, 1)
+    strides[axis] += 1
+    tensor.strides = strides
+    with pytest.raises(OvstageContractError, match="strided DLTensor"):
+        _runtime._tensor_source_view(tensor, dtype=wp.float64, lanes=16)
 
 
 def test_wait_operations_drains_every_operation_after_failure():

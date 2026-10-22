@@ -81,6 +81,9 @@ python -m ovnewton.examples.example_ovnewton_robot
 
 The USD scene in this example is supplied by the application.
 
+`ovnewton.population_desc()` selects physics data and preserves composed schema
+names. Combine it with a rendering descriptor as shown below.
+
 ```python
 import newton
 import ovnewton
@@ -91,11 +94,12 @@ scene_path = "/path/to/scene.usd"
 
 ovnewton.register_usd_schemas()
 stage = ovstage.Stage()
-population.open_usd(
+population.open_usd_with_desc(
     stage,
     scene_path,
     ordinal=1,
-    domains=PopulationDomain.ALL,
+    time=population.DEFAULT_TIME,
+    descs=(population.Desc(domains=PopulationDomain.RENDERING), ovnewton.population_desc()),
 )
 stage.advance_write_floor(1).wait()
 
@@ -120,8 +124,13 @@ binding.update_to_ovstage(state_1, ordinal=2)
 stage.advance_write_floor(2).wait()
 ```
 
-Call `binding.update_from_ovstage(state, control)` before a simulation step to
-apply supported state and drive-target changes from the stage. Use
+Call `binding.update_from_ovstage(state, control)` when you intend to resynchronize
+all supported state and drive targets from the sealed stage. This can overwrite
+live simulation state with older stage values. To update only
+joint targets while preserving live simulation state, pass
+`attributes=("jointPositionTarget", "jointVelocityTarget")`. The same selector
+supports body pose/velocity and single-DOF joint state; see the getting-started
+guide for the field list and synchronization semantics. Use
 `binding.query()` and `binding.read()` to expose selected read-only Newton state
 without publishing it.
 

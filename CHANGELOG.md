@@ -7,6 +7,46 @@ SPDX-License-Identifier: Apache-2.0
 
 Notable user-facing changes to ovnewton.
 
+## [0.2.1] - 2026-10-22
+
+### Upgrading from 0.2.0
+
+Upgrade the runtime stack together: Newton 1.6 and OVStage 0.2 / OVRTX 0.5
+are no longer supported. Use Newton 1.7 or newer, OVStage 0.3, and optional
+OVRTX 0.6 with the exact requirements listed below. For application-owned
+stages, populate with `population_desc()` or equivalent schema metadata.
+Rendering examples now disable debug synchronization by default; pass
+`--render-debug-sync true` when diagnosing rendering problems.
+
+### Added
+
+- Select body pose/velocity, single-DOF joint state, and drive targets with `update_from_ovstage(attributes=...)`. Target-only updates preserve live state; every selection preserves unselected arrays and unmapped joint coordinates.
+- Add `--render-debug-sync true|false` to the rendering examples, with debug synchronization disabled by default.
+- Import `MjcJointAPI` dynamics and registered MuJoCo solver parameters for revolute, prismatic, and D6 joints.
+- Import MuJoCo Connect/Weld body equalities and scalar joint equalities, preserving their parameters through `population_desc()`.
+- Add `using-ovnewton` and `physical-ai-physics-selection` agent skills and evaluation datasets to the public source distribution.
+- Add `population_desc()` to preserve composed schema names for unsupported-physics validation, including schemas without a registered plugin.
+
+### Changed
+
+- Require Pillow 13.0.0 or newer for the examples extra to include upstream security fixes.
+- Reuse fixed publication queries and ingress path lists across runtime updates instead of rebuilding them each time.
+- Construct the OVStage stage before the OVRTX renderer in the shipped examples, following the OVStage 0.3 startup requirement.
+- Require Newton 1.7.0 or newer, OVStage 0.3.0.1791986420, and optional OVRTX `>=0.6.0.1791947691,<0.7`. Dependencies remain available from public package sources.
+- Require scalar-component OVStage reads and remove the Newton 1.6 compatibility paths. Python 3.11 through 3.14 remain supported.
+- Populate application-owned stages with `population_desc()` or equivalent schema metadata; use GPU incremental hierarchy computation when rendering, including with CPU physics.
+
+### Fixed
+
+- Keep rigid-body collision filters from suppressing collisions with separately owned nested bodies.
+- Accept joint endpoints on existing static prims as world anchors while retaining invalid-target checks.
+- Advance path reads past empty or deleted groups without reprocessing or releasing a group twice.
+- Initialize interactive cameras from the current sealed scene state so the basic viewer starts after its first simulation step with OVStage 0.3.
+- Preserve logical rows and validate contiguous tensor layouts with OVStage 0.3.
+- Preserve unsupported MuJoCo schema rejection when OVStage omits unregistered API names.
+- Apply `PhysicsMassAPI` so the rigid-body example uses its authored 1 kg masses, and explicitly select compliant VBD contacts.
+- Resolve the Newton 1.7 importer dependencies on ARM64/Python 3.13 with USD Exchange 3.0.1.
+
 ## [0.2.0] - 2026-10-08
 
 ### Added

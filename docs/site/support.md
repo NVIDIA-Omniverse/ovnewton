@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Requirements
 
-The supported Python range is 3.11 through 3.14. The NumPy and SciPy floors are 1.26.0 and 1.11.2 on Python 3.11 and 3.12, 2.1.0 and 1.14.1 on Python 3.13, and NumPy 2.3.2 and SciPy 1.16.1 on Python 3.14. The fast-simplification floor is 0.1.13. Ovstage supports `>=0.2.0.377349,<0.3`, and the optional examples require OVRTX `>=0.5.0.377615,<0.6`. The lockfile retains the tested versions, while installations may select newer versions within these ranges. The remaining dependency floors are Newton 1.6 and Warp 1.17. CI tests the minimum versions with the built ovnewton wheel on Linux x86-64.
+The supported Python range is 3.11 through 3.14. The NumPy and SciPy floors are 1.26.0 and 1.11.2 on Python 3.11 and 3.12, 2.1.0 and 1.14.1 on Python 3.13, and NumPy 2.3.2 and SciPy 1.16.1 on Python 3.14. The fast-simplification floor is 0.1.13. Ovstage is pinned to the qualified public build `0.3.0.1791986420`; optional examples require OVRTX `>=0.6.0.1791947691,<0.7`. The remaining dependency floors are Newton 1.7.0 and Warp 1.17.0. CI tests these versions with the built ovnewton wheel on Linux x86-64. Dependencies install from public package sources.
 
 Supported non-rendering workflows can run entirely on the CPU. OVRTX rendering requires a compatible NVIDIA RTX-capable GPU and supported driver, even when physics runs on the CPU.
 
@@ -20,6 +20,9 @@ Supported non-rendering workflows can run entirely on the CPU. OVRTX rendering r
 - sphere, cube, capsule, cylinder, cone, and mesh colliders
 - mass, inertia, center of mass, physics materials, and collision filtering
 - revolute, prismatic, fixed, spherical, distance, and D6 joints
+- MuJoCo Connect/Weld body equalities with explicit {ref}`population selection <mujoco-body-equalities>`
+- MuJoCo scalar joint equalities, including polynomial coefficients and disabled constraints
+- `MjcJointAPI` parameters on revolute, prismatic, and D6 joints, including merged scalar axes
 - initial body and joint state
 - body state and single-axis joint state updates
 - selected read-only Newton output on CPU and CUDA
@@ -28,12 +31,13 @@ Malformed data and unsupported physics that would change the model raise an erro
 
 Authored angular joint positions and velocities are converted from USD degrees
 and degrees/s to Newton radians and radians/s, both at import and during runtime
-updates. Initial angular velocities intentionally differ from Newton 1.6.0's
-`add_usd()` importer, which left them unconverted. Linear joint state is unchanged.
+updates, matching Newton's `add_usd()` importer. Linear joint state is unchanged.
 
 ## Known limits
 
 - Native USD physics instances are rejected.
+- MuJoCo body-equality endpoints must target rigid bodies directly or omit a target for world. Joint equalities require scalar revolute/prismatic joints, not source axes merged into D6. Site endpoints are not supported. Full equality semantics require `SolverMuJoCo`.
+- `MjcJointAPI` is limited to revolute, prismatic, and D6 joints. Native D6 reference coordinates are rejected. MuJoCo-specific solver parameters require attribute registration before import; see {ref}`MuJoCo joint parameters <mujoco-joint-parameters>`.
 - Physics `PointInstancer` content is rejected.
 - Per-axis runtime state for D6 joints is not synchronized.
 - Newton limitation: its mimic APIs operate on whole joints and cannot target individual source axes after D6 merging. ovnewton rejects enabled mimics involving such merges with `UnsupportedPhysicsError` to preserve authored physics. This is intentionally stricter than Newton's USD importer, which can warn and continue when joint dimensions match.

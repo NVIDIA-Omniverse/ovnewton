@@ -29,8 +29,6 @@ from ovnewton._src import _build, _runtime
 from ovnewton._src._build import _R3
 from ovnewton.examples import get_asset
 
-from .runtime_helpers import lanes_tensor, warp_lanes_tensor
-
 if not wp.is_cuda_available():
     pytest.skip("CUDA not available", allow_module_level=True)
 
@@ -188,8 +186,8 @@ def test_runtime_ingress_matches_groups_by_prim_identity():
         wp.array([20.0], dtype=wp.float32, device=runtime.device),
     ]
     groups = [
-        _ReadGroup(warp_lanes_tensor(sources[1], count=1, lanes=1), row=1),
-        _ReadGroup(warp_lanes_tensor(sources[0], count=1, lanes=1), row=0),
+        _ReadGroup(ovstage.make_dltensor(sources[1]), row=1),
+        _ReadGroup(ovstage.make_dltensor(sources[0]), row=0),
     ]
     stage = _ReadStage(groups)
 
@@ -304,7 +302,7 @@ def test_body_publication_kernel_matches_cpu_encoders(device):
 
 def test_runtime_tensor_source_view_aliases_declared_device():
     gpu = wp.array([1.0, 2.0, 3.0], dtype=wp.float32, device=_DEVICE)
-    gpu_tensor = warp_lanes_tensor(gpu, count=1, lanes=3)
+    gpu_tensor = ovstage.make_dltensor(gpu.reshape((1, 3)))
     alias, source_device = _runtime._tensor_source_view(
         gpu_tensor,
         dtype=wp.float32,
@@ -313,7 +311,7 @@ def test_runtime_tensor_source_view_aliases_declared_device():
     assert alias.ptr == gpu.ptr
     assert source_device == wp.get_device(_DEVICE)
 
-    cpu_tensor = lanes_tensor(np.asarray([[4.0, 5.0, 6.0]], dtype=np.float32), lanes=3)
+    cpu_tensor = ovstage.make_dltensor(np.asarray([[4.0, 5.0, 6.0]], dtype=np.float32))
     alias, source_device = _runtime._tensor_source_view(
         cpu_tensor,
         dtype=wp.float32,
@@ -334,7 +332,7 @@ def test_runtime_ingress_waits_for_cuda_producer_event(monkeypatch, destination_
         wp.copy(source, source_value)
         producer_stream.record_event(producer_event)
 
-    tensor = warp_lanes_tensor(source, count=1, lanes=1)
+    tensor = ovstage.make_dltensor(source)
     group = _ReadGroup(tensor, wait_event=producer_event.cuda_event)
     stage = _ReadStage(group)
     waits = []
@@ -374,7 +372,7 @@ def test_runtime_ingress_waits_for_cuda_producer_stream(monkeypatch, destination
     with wp.ScopedStream(producer_stream):
         wp.copy(source, source_value)
 
-    tensor = warp_lanes_tensor(source, count=1, lanes=1)
+    tensor = ovstage.make_dltensor(source)
     group = _ReadGroup(tensor, cuda_stream=producer_stream.cuda_stream)
     stage = _ReadStage(group)
     waits = []
@@ -416,7 +414,7 @@ def test_runtime_ingress_waits_for_cuda_producer_stream(monkeypatch, destination
 def test_runtime_ingress_maps_default_cuda_stream_sentinel(monkeypatch):
     source = wp.array([23.0], dtype=wp.float32, device=_DEVICE)
     destination = wp.zeros_like(source)
-    tensor = warp_lanes_tensor(source, count=1, lanes=1)
+    tensor = ovstage.make_dltensor(source)
     group = _ReadGroup(tensor, cuda_stream=1)
     stage = _ReadStage(group)
     consumer_stream = wp.Stream(destination.device)
@@ -442,7 +440,7 @@ def test_runtime_ingress_honors_combined_cuda_sync(monkeypatch):
     producer_stream = wp.Stream(_DEVICE)
     producer_event = wp.Event(_DEVICE)
     producer_stream.record_event(producer_event)
-    tensor = warp_lanes_tensor(source, count=1, lanes=1)
+    tensor = ovstage.make_dltensor(source)
     group = _ReadGroup(
         tensor,
         cuda_stream=producer_stream.cuda_stream,
@@ -476,7 +474,7 @@ def test_runtime_ingress_honors_combined_cuda_sync(monkeypatch):
 
 @pytest.mark.parametrize("cuda_stream,wait_event", [(1, 0), (0, 1)])
 def test_runtime_ingress_rejects_cuda_sync_on_cpu_data(cuda_stream, wait_event):
-    tensor = lanes_tensor(np.asarray([[3.0]], dtype=np.float32), lanes=1)
+    tensor = ovstage.make_dltensor(np.asarray([3.0], dtype=np.float32))
     destination = wp.zeros(1, dtype=wp.float32, device="cpu")
     group = _ReadGroup(tensor, cuda_stream=cuda_stream, wait_event=wait_event)
     stage = _ReadStage(group)
@@ -489,7 +487,7 @@ def test_runtime_ingress_rejects_cuda_sync_on_cpu_data(cuda_stream, wait_event):
 def test_runtime_ingress_retains_groups_when_stream_sync_fails(monkeypatch):
     source = wp.array([3.0], dtype=wp.float32, device=_DEVICE)
     destination = wp.zeros_like(source)
-    group = _ReadGroup(warp_lanes_tensor(source, count=1, lanes=1))
+    group = _ReadGroup(ovstage.make_dltensor(source))
     stage = _ReadStage(group)
     synchronize_stream = wp.synchronize_stream
     consumer_stream = wp.Stream(_DEVICE)
@@ -509,7 +507,7 @@ def test_runtime_ingress_retains_groups_when_stream_sync_fails(monkeypatch):
 def test_runtime_ingress_rejects_graph_capture_before_read(monkeypatch):
     source = wp.array([3.0], dtype=wp.float32, device=_DEVICE)
     destination = wp.zeros_like(source)
-    stage = _ReadStage(_ReadGroup(warp_lanes_tensor(source, count=1, lanes=1)))
+    stage = _ReadStage(_ReadGroup(ovstage.make_dltensor(source)))
     stream = SimpleNamespace(device=SimpleNamespace(is_capturing=True))
 
     monkeypatch.setattr(wp, "get_stream", lambda _device: stream)

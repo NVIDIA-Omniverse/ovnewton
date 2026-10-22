@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass
 from typing import Any, Collection, Dict, List, Optional, Sequence, Tuple
 
@@ -43,6 +44,7 @@ from ._schema_names import (
     NEWTON_SDF_TEXTURE_FORMAT,
     NEWTON_SHELL_THICKNESS,
     NEWTON_TORSIONAL_FRICTION,
+    USD_API_SCHEMAS,
     USD_PARENT,
     USD_PATH,
     USD_PRIM_TYPE,
@@ -51,6 +53,12 @@ from ._schema_names import (
     joint_drive,
     joint_limit,
     joint_state,
+)
+from ._schemas import (
+    _MJC_JOINT_CUSTOM_ATTRIBUTES,
+    _MJC_JOINT_DYNAMICS,
+    _MJC_JOINT_PROPERTIES,
+    _MJC_JOINT_UNSUPPORTED_PROPERTIES,
 )
 
 
@@ -90,6 +98,7 @@ class _JointDesc:
     excluded_from_articulation: bool = False
     min_distance: float = -1.0
     max_distance: float = -1.0
+    mjc_properties: Optional[Dict[str, Any]] = None
 
 
 @dataclass(frozen=True)
@@ -440,17 +449,43 @@ def validate_unsupported_point_instancers(
                 raise UnsupportedPhysicsError(f"physics PointInstancer is unsupported at {path}")
 
 
-def validate_supported_joints(stage: Any, pd: Any, ordinal: int) -> None:
-    """Reject joint schemas whose semantics this importer cannot preserve."""
-    for schema in ("MjcJointAPI", "MjcEqualityConnectAPI", "MjcEqualityWeldAPI", "MjcEqualityJointAPI"):
-        paths = _filtered_paths(
-            stage,
-            pd,
-            [Predicate(USD_SCHEMAS, FilterOp.CONTAINS, [schema])],
-            ordinal,
+def read_applied_schemas(stage: Any, pd: Any, ordinal: int, paths: Sequence[str]) -> Dict[str, set[str]]:
+    """Read applied-schema names by path, including unregistered composed names."""
+    result: Dict[str, set[str]] = {}
+    if not paths:
+        return result
+    # Unregistered API names may be absent from usd-schemas. Read their
+    # composed metadata too; CONTAINS filters do not support metadata columns.
+    attributes = (USD_SCHEMAS, USD_API_SCHEMAS)
+    with _stage._path_list_query(stage, pd, paths) as query:
+        columns = _stage.read_columns(stage, pd, query, attributes, ordinal, ragged=attributes)
+    for rows in columns.values():
+        for index, row in rows.items():
+            result.setdefault(paths[index], set()).update(pd.token_to_string(int(token)) for token in row)
+    return result
+
+
+def validate_supported_joints(stage: Any, pd: Any, ordinal: int, *, paths: Sequence[str]) -> None:
+    """Require complete population and supported joint types for MuJoCo settings."""
+    candidates = [
+        path for path, schemas in read_applied_schemas(stage, pd, ordinal, paths).items() if "MjcJointAPI" in schemas
+    ]
+    if not candidates:
+        return
+    with _stage._path_list_query(stage, pd, candidates) as query:
+        columns = _stage.read_columns(
+            stage, pd, query, (USD_API_SCHEMAS, USD_PRIM_TYPE), ordinal, ragged=(USD_API_SCHEMAS,)
         )
-        if paths:
-            raise UnsupportedPhysicsError(f"unsupported {schema} properties at {paths[0]}")
+    for i, path in enumerate(candidates):
+        if i not in columns[USD_API_SCHEMAS]:
+            raise OvstageContractError(f"MjcJointAPI at {path} requires population with ovnewton.population_desc()")
+        types = columns[USD_PRIM_TYPE].get(i)
+        if types is None or pd.token_to_string(int(types[0])) not in (
+            "PhysicsRevoluteJoint", "PhysicsPrismaticJoint", "PhysicsJoint"
+        ):
+            raise UnsupportedPhysicsError(
+                f"unsupported MjcJointAPI properties at {path}; requires a revolute, prismatic, or D6 joint"
+            )
 
 
 def read_bodies(
@@ -534,6 +569,8 @@ def read_mimics(stage: Any, pd: Any, ordinal: int) -> List[Dict[str, Any]]:
             ordinal,
         )
     )
+    schemas = read_applied_schemas(stage, pd, ordinal, paths)
+    paths = [path for path in paths if "MjcEqualityJointAPI" not in schemas[path]]
     if not paths:
         return []
     with _stage._path_list_query(stage, pd, paths) as query:
@@ -1009,6 +1046,58 @@ _JOINT_FRAME_ATTRS = (
 )
 
 
+def _mjc_angles_in_degrees(stage: Any, pd: Any, ordinal: int) -> bool:
+    """Resolve the scene convention only when a joint needs angular references."""
+    scenes = _type_paths(stage, pd, "PhysicsScene", ordinal)
+    if not scenes:
+        return True
+    with _stage._path_list_query(stage, pd, scenes) as query:
+        units = _stage.read_columns(stage, pd, query, ("mjc:compiler:angle",), ordinal)["mjc:compiler:angle"]
+    angle_units = {pd.token_to_string(int(row[0])) for row in units.values()}
+    if len(units) < len(scenes):
+        angle_units.add("degree")
+    if len(angle_units) > 1 or not angle_units <= {"degree", "radian"}:
+        raise UnsupportedPhysicsError("conflicting or invalid mjc:compiler:angle values; use one angle convention")
+    return "radian" not in angle_units
+
+
+def _mjc_joint_properties(
+    columns: Dict[str, Dict[int, np.ndarray]],
+    index: int,
+    path: str,
+    jtype: str,
+    has_newton_api: bool,
+) -> Dict[str, Any]:
+    """Validate resolved MuJoCo values and reject ambiguous Newton overrides."""
+    properties = {}
+    for name in _MJC_JOINT_PROPERTIES:
+        row = columns[name].get(index)
+        if row is None:
+            continue
+        if name in _MJC_JOINT_UNSUPPORTED_PROPERTIES:
+            raise UnsupportedPhysicsError(f"unsupported {name} at {path}")
+        size = _MJC_JOINT_CUSTOM_ATTRIBUTES.get(name, (None, 1))[1]
+        if len(row) != size or not np.all(np.isfinite(row)):
+            raise InvalidPhysicsError(f"invalid {name} at {path}; expected {size} finite values")
+        if row[0] < 0 and name in (
+            "mjc:armature", "mjc:damping", "mjc:frictionloss", "mjc:stiffness", "mjc:margin"
+        ):
+            raise InvalidPhysicsError(f"invalid {name} at {path}; expected a nonnegative value")
+        if jtype == "PhysicsJoint" and name in ("mjc:ref", "mjc:springref"):
+            raise UnsupportedPhysicsError(f"{name} at {path} has no native D6 reference-coordinate semantics")
+        properties[name] = tuple(float(v) for v in row) if size > 1 else float(row[0])
+    if has_newton_api:
+        for field, mjc_name in _MJC_JOINT_DYNAMICS.items():
+            newton_name = _NEWTON_JOINT_API_FIELDS[field]
+            if _row_scalar(columns[newton_name], index) == 0 and properties.get(mjc_name, 0) != 0:
+                raise UnsupportedPhysicsError(
+                    f"ambiguous {newton_name} and {mjc_name} at {path}; "
+                    "population cannot distinguish an authored zero from a schema fallback; "
+                    "use a single joint parameter namespace"
+                )
+    return properties
+
+
 def _read_joints_of_type(
     stage: Any,
     pd: Any,
@@ -1026,6 +1115,7 @@ def _read_joints_of_type(
         instance = "angular" if jtype == "PhysicsRevoluteJoint" else "linear"
         fixed_attrs = [
             *_JOINT_FRAME_ATTRS,
+            *_MJC_JOINT_PROPERTIES,
             COLLISION_ENABLED,
             "physics:jointEnabled",
             "physics:excludeFromArticulation",
@@ -1083,7 +1173,10 @@ def _read_joints_of_type(
             q,
             tuple(dict.fromkeys((*fixed_attrs, *relationship_attrs))),
             ordinal,
-            ragged=relationship_attrs,
+            ragged=(
+                *relationship_attrs, "mjc:springdamper",
+                *(name for name, (_, size) in _MJC_JOINT_CUSTOM_ATTRIBUTES.items() if size > 1),
+            ),
         )
         b0 = {i: [int(x) for x in row.tolist()] for i, row in columns["physics:body0"].items()}
         b1 = {i: [int(x) for x in row.tolist()] for i, row in columns["physics:body1"].items()}
@@ -1117,6 +1210,8 @@ def _read_joints_of_type(
             return pd.path_to_string(targets[0]) if targets else None
 
         joints = []
+        mjc_angles_in_degrees = None
+        schemas = read_applied_schemas(stage, pd, ordinal, paths)
         for i in range(n):
             path = paths[i]
             if dof_attrs and path in newton_joint_api:
@@ -1143,6 +1238,17 @@ def _read_joints_of_type(
                     level=logging.INFO,
                 )
                 continue
+            mjc_properties = None
+            if "MjcJointAPI" in schemas.get(path, ()):
+                mjc_properties = _mjc_joint_properties(columns, i, path, jtype, path in newton_joint_api)
+                if jtype == "PhysicsRevoluteJoint":
+                    for name in ("mjc:ref", "mjc:springref"):
+                        if name not in mjc_properties:
+                            continue
+                        if mjc_angles_in_degrees is None:
+                            mjc_angles_in_degrees = _mjc_angles_in_degrees(stage, pd, ordinal)
+                        if mjc_angles_in_degrees:
+                            mjc_properties[name] = math.radians(mjc_properties[name])
             excluded = excluded_rows.get(i)
             excluded_from_articulation = bool(excluded[0]) if excluded is not None and len(excluded) else False
             for name, rows in (("breakForce", break_force_rows), ("breakTorque", break_torque_rows)):
@@ -1192,6 +1298,7 @@ def _read_joints_of_type(
                         excluded_from_articulation=excluded_from_articulation,
                         min_distance=_row_scalar(columns.get("physics:minDistance", {}), i, -1.0),
                         max_distance=_row_scalar(columns.get("physics:maxDistance", {}), i, -1.0),
+                        mjc_properties=mjc_properties,
                     ),
                 )
             )
@@ -1204,9 +1311,10 @@ def read_joints(
     ordinal: int,
     *,
     hierarchy: _Hierarchy,
+    equality_paths: Collection[str] = (),
 ) -> List[Tuple[str, _JointDesc]]:
     """Read supported joints and reject every recognized unsupported joint schema."""
-    validate_supported_joints(stage, pd, ordinal)
+    validate_supported_joints(stage, pd, ordinal, paths=tuple(hierarchy.parents))
     paths = _filtered_paths(
         stage,
         pd,
@@ -1222,6 +1330,10 @@ def read_joints(
             "flatten physics instances before attachment"
         )
     paths_by_type = _paths_by_prim_type(stage, pd, paths, ordinal)
+    paths_by_type = {
+        jtype: [path for path in typed_paths if path not in equality_paths]
+        for jtype, typed_paths in paths_by_type.items()
+    }
     newton_joint_api = _api_paths(stage, pd, ordinal, "NewtonJointAPI")
     return [
         joint

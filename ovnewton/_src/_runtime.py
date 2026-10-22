@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import contextlib
 import ctypes
+import weakref
 from collections import Counter
 from dataclasses import dataclass, field
 from numbers import Integral
@@ -26,8 +27,13 @@ from ovstage import (
     DLDevice,
     DLDeviceType,
     DLTensor,
+    ErrorCode,
+    OvstageError,
     WriteDesc,
     make_dltensor,
+)
+from ovstage import (
+    Query as StageQuery,
 )
 
 from . import _stage
@@ -48,7 +54,6 @@ from .ovnewton import (
     ReadResult,
     SimObjectType,
     _destroy_path_lists,
-    _finalize_path_lists,
     _ReadStorage,
 )
 
@@ -253,6 +258,9 @@ class _RuntimeTransport:
     paths: Tuple[str, ...] = field(init=False, default=())
     channel_rows: Dict[str, Tuple[int, ...]] = field(init=False, default_factory=dict)
     read_plan: Optional["_ReadPlan"] = field(init=False, default=None)
+    read_path_list: Optional[int] = field(init=False, default=None)
+    read_fields: Dict[str, "_ReadField"] = field(init=False, default_factory=dict)
+    read_plans: Dict[Tuple[str, ...], "_ReadPlan"] = field(init=False, default_factory=dict)
     position_target_required: bool = field(init=False, default=False)
     velocity_target_required: bool = field(init=False, default=False)
     producer_event: Any = field(init=False, default=None)
@@ -288,6 +296,24 @@ class _RuntimeTransport:
             self.target_qd_in = wp.empty(control.joint_target_qd.shape, dtype=wp.float32, device=self.device)
         self.position_target_required = any(channel.position_target_rows for channel in self.channels)
         self.velocity_target_required = any(channel.velocity_target_rows for channel in self.channels)
+        self.read_fields = {
+            _BODY_Q: _ReadField("state", "body_q", self.body_q_in, preserve_unmapped=False),
+            _BODY_QD: _ReadField("state", "body_qd", self.body_qd_in, preserve_unmapped=False),
+            _JOINT_POSITION: _ReadField("state", "joint_q", self.joint_q_in),
+            _JOINT_VELOCITY: _ReadField("state", "joint_qd", self.joint_qd_in),
+            _JOINT_POSITION_TARGET: _ReadField(
+                "control",
+                "joint_target_q",
+                self.target_q_in,
+                self.position_target_required,
+            ),
+            _JOINT_VELOCITY_TARGET: _ReadField(
+                "control",
+                "joint_target_qd",
+                self.target_qd_in,
+                self.velocity_target_required,
+            ),
+        }
 
     def indices(self, values: Sequence[int]):
         key = tuple(int(value) for value in values)
@@ -306,6 +332,17 @@ class _RuntimeTransport:
         return result
 
 
+@dataclass(frozen=True)
+class _ReadField:
+    """One selectable Newton destination and its reusable ingress staging."""
+
+    owner: str
+    array: str
+    staging: Any
+    required: bool = True
+    preserve_unmapped: bool = True
+
+
 @dataclass
 class _ReadColumn:
     """One typed column in a batched latest-payload read."""
@@ -316,6 +353,7 @@ class _ReadColumn:
     expected_rows: frozenset[int]
     consume: Any
     destination_rows: Any
+    field_name: str = ""
     kind: str = "runtime attribute"
     phase: int = 0
     accepted_rows: Optional[frozenset[int]] = None
@@ -329,6 +367,7 @@ class _ReadPlan:
     columns: Tuple[_ReadColumn, ...]
     tokens: Tuple[int, ...]
     by_token: Dict[int, _ReadColumn]
+    fields: Tuple[str, ...]
 
 
 @dataclass
@@ -975,20 +1014,36 @@ def _publication_write(
     )
 
 
-def _create_publication_batches(binding: Any) -> Tuple[Tuple[int, Tuple[WriteDesc, ...]], ...]:
+def _release_publication_query(query: StageQuery) -> None:
+    """Release a retained query, allowing the caller to destroy its Stage first."""
+    try:
+        query.release().wait()
+    except OvstageError as error:
+        if error.code != ErrorCode.INVALID_HANDLE:
+            raise
+
+
+def _create_publication_batches(binding: Any) -> Tuple[Tuple[StageQuery, Tuple[WriteDesc, ...]], ...]:
     runtime = binding._runtime
     pd = binding._pd
     batches = []
-    owned_path_lists = []
-    try:
+    with contextlib.ExitStack() as resources:
+
+        def query_for_paths(paths: Sequence[str]) -> StageQuery:
+            path_list = pd.create_path_list_from_strings(paths)
+            # ExitStack releases each query before its caller-owned path list.
+            resources.callback(_destroy_path_lists, pd, (path_list,))
+            query = binding._stage.query_from_path_list(path_list)
+            resources.callback(_release_publication_query, query)
+            return query
+
         binding._surface_publication = None
         body_paths = list(runtime.model.body_label)
         if body_paths:
-            path_list = pd.create_path_list_from_strings(body_paths)
-            owned_path_lists.append(path_list)
+            query = query_for_paths(body_paths)
             batches.append(
                 (
-                    path_list,
+                    query,
                     (
                         _publication_write(
                             runtime,
@@ -1032,11 +1087,10 @@ def _create_publication_batches(binding: Any) -> Tuple[Tuple[int, Tuple[WriteDes
                 )
             )
         for channel in runtime.channels:
-            path_list = pd.create_path_list_from_strings(channel.paths)
-            owned_path_lists.append(path_list)
+            query = query_for_paths(channel.paths)
             batches.append(
                 (
-                    path_list,
+                    query,
                     (
                         _publication_write(
                             runtime,
@@ -1061,15 +1115,12 @@ def _create_publication_batches(binding: Any) -> Tuple[Tuple[int, Tuple[WriteDes
 
         surfaces = model_surface_ranges(runtime.model)
         if surfaces:
-            path_list = pd.create_path_list_from_strings([surface.geometry_path for surface in surfaces])
-            owned_path_lists.append(path_list)
-            binding._surface_publication = (path_list, surfaces)
+            query = query_for_paths([surface.geometry_path for surface in surfaces])
+            binding._surface_publication = (query, surfaces)
         result = tuple(batches)
-        _finalize_path_lists(binding, pd, owned_path_lists)
+        # Transfer cleanup to the binding only after setup succeeds.
+        weakref.finalize(binding, resources.pop_all().close)
         return result
-    except Exception:
-        _destroy_path_lists(pd, tuple(owned_path_lists))
-        raise
 
 
 def _joint_output_selection(
@@ -1455,6 +1506,8 @@ def _joint_body_order_signs(
     ordinal: int,
 ) -> Tuple[float, ...]:
     """Map Newton joint directions back to the authored USD body order."""
+    from . import _parse
+
     model = binding._runtime.model
     signs = [1.0] * model.joint_count
     paths = tuple(joint_by_path)
@@ -1471,13 +1524,28 @@ def _joint_body_order_signs(
             ragged=("physics:body0", "physics:body1"),
         )
 
+    body_paths = set(model.body_label)
+    hierarchy = None
+    rigid_paths = set()
+
     def target(rows: Mapping[int, Any], row: int) -> Optional[str]:
+        nonlocal hierarchy, rigid_paths
         values = rows.get(row)
         if values is None or not len(values):
             return None
         if len(values) != 1:
             raise ValueError(f"joint {paths[row]} has more than one body target")
-        return binding._pd.path_to_string(int(values[0]))
+        path = binding._pd.path_to_string(int(values[0]))
+        if path not in body_paths:
+            if hierarchy is None:
+                hierarchy = _parse.read_hierarchy(binding._stage, binding._pd, ordinal)
+                rigid_paths = body_paths | set(_parse._api_paths(
+                    binding._stage, binding._pd, ordinal, "PhysicsRigidBodyAPI"
+                ))
+            # Normalize only verified static endpoints, not missing model bodies.
+            if path in hierarchy.parents and hierarchy.nearest(path, rigid_paths) is None:
+                return None
+        return path
 
     parents = model.joint_parent.numpy()
     children = model.joint_child.numpy()
@@ -2330,47 +2398,44 @@ def publish_output(binding: Any, state: Any, ordinal: int) -> None:
         if stream is not None:
             stream.record_event(runtime.producer_event)
         operations = []
-        with contextlib.ExitStack() as stack:
-            try:
-                for path_list, writes in binding._publication_batches:
-                    query = stack.enter_context(binding._stage.query_from_path_list(path_list))
-                    operations.append(binding._stage.write_attributes(query, writes, int(ordinal)))
-                if binding._surface_publication is not None:
-                    path_list, surfaces = binding._surface_publication
-                    tensors = tuple(
-                        make_dltensor(
-                            particle_q[surface.particle_start : surface.particle_end],
-                            dtype=DLDataType(code=DLDataTypeCode.kDLFloat, bits=32, lanes=3),
-                            shape=[surface.particle_end - surface.particle_start],
-                            ndim=1,
-                        )
-                        for surface in surfaces
+        try:
+            for query, writes in binding._publication_batches:
+                operations.append(binding._stage.write_attributes(query, writes, int(ordinal)))
+            if binding._surface_publication is not None:
+                query, surfaces = binding._surface_publication
+                tensors = tuple(
+                    make_dltensor(
+                        particle_q[surface.particle_start : surface.particle_end],
+                        dtype=DLDataType(code=DLDataTypeCode.kDLFloat, bits=32, lanes=3),
+                        shape=[surface.particle_end - surface.particle_start],
+                        ndim=1,
                     )
-                    event = (
-                        int(runtime.producer_event.cuda_event)
-                        if runtime.device.is_cuda and runtime.producer_event is not None
-                        else None
-                    )
-                    query = stack.enter_context(binding._stage.query_from_path_list(path_list))
-                    operations.append(
-                        binding._stage.write_attributes(
-                            query,
-                            (
-                                WriteDesc(
-                                    attribute=runtime.token(binding._pd, "points"),
-                                    tensors=tensors,
-                                    is_array=True,
-                                    semantic=AttributeSemantic.POINT,
-                                    cuda_event=event,
-                                ),
+                    for surface in surfaces
+                )
+                event = (
+                    int(runtime.producer_event.cuda_event)
+                    if runtime.device.is_cuda and runtime.producer_event is not None
+                    else None
+                )
+                operations.append(
+                    binding._stage.write_attributes(
+                        query,
+                        (
+                            WriteDesc(
+                                attribute=runtime.token(binding._pd, "points"),
+                                tensors=tensors,
+                                is_array=True,
+                                semantic=AttributeSemantic.POINT,
+                                cuda_event=event,
                             ),
-                            int(ordinal),
-                        )
+                        ),
+                        int(ordinal),
                     )
-            except Exception:
-                _wait_operations(operations, suppress=True)
-                raise
-            _wait_operations(operations)
+                )
+        except Exception:
+            _wait_operations(operations, suppress=True)
+            raise
+        _wait_operations(operations)
 
 
 def _tensor_device(tensor: Any):
@@ -2384,24 +2449,39 @@ def _tensor_device(tensor: Any):
 
 
 def _tensor_source_view(tensor: Any, *, dtype: Any, lanes: int, attribute: str = "runtime column"):
-    """Validate and alias one contiguous ovstage DLTensor as a Warp array."""
+    """Alias a contiguous scalar-component DLTensor without copying."""
     expected_bits = 64 if dtype == wp.float64 else 32
     if (
         int(tensor.dtype.code) != DLDataTypeCode.kDLFloat
         or int(tensor.dtype.bits) != expected_bits
-        or int(tensor.dtype.lanes) != lanes
+        or int(tensor.dtype.lanes) != 1
     ):
         raise OvstageContractError(
             f"{attribute!r} has incompatible DLTensor type "
             f"(code={int(tensor.dtype.code)}, bits={int(tensor.dtype.bits)}, lanes={int(tensor.dtype.lanes)}); "
-            f"expected float{expected_bits}x{lanes}"
+            f"expected scalar float{expected_bits} (lanes=1)"
         )
-    if int(tensor.ndim) != 1 or not tensor.shape:
-        raise OvstageContractError(f"{attribute!r} must be a contiguous one-dimensional DLTensor")
+    # Scalars have shape [N], vectors [N, 3], and matrices [N, 4, 4].
+    components = () if lanes == 1 else (4, 4) if lanes == 16 else (lanes,)
+    ndim = int(tensor.ndim)
+    if ndim != len(components) + 1 or not tensor.shape:
+        raise OvstageContractError(f"{attribute!r} must have a row axis followed by component shape {components}")
+    shape = tuple(int(tensor.shape[axis]) for axis in range(ndim))
+    if shape[1:] != components:
+        raise OvstageContractError(
+            f"{attribute!r} has incompatible component shape {shape[1:]}; expected {components}"
+        )
+    if any(size < 0 for size in shape):
+        raise OvstageContractError(f"{attribute!r} returned a negative DLTensor dimension")
     if tensor.strides:
-        raise OvstageContractError(f"{attribute!r} returned a strided DLTensor")
+        # Strides count scalar components in row-major order.
+        expected_stride = 1
+        for axis in reversed(range(ndim)):
+            if int(tensor.strides[axis]) != expected_stride:
+                raise OvstageContractError(f"{attribute!r} returned a strided DLTensor")
+            expected_stride *= shape[axis]
 
-    count = int(tensor.shape[0]) * lanes
+    count = shape[0] * lanes
     if count and not tensor.data:
         raise OvstageContractError(f"{attribute!r} returned a null data pointer")
     device = _tensor_device(tensor)
@@ -2421,9 +2501,14 @@ def _column_tokens(runtime: _RuntimeTransport, pd: Any, columns: Sequence[_ReadC
     return result
 
 
-def _make_read_plan(runtime: _RuntimeTransport, pd: Any, columns: Sequence[_ReadColumn]) -> _ReadPlan:
+def _make_read_plan(
+    runtime: _RuntimeTransport,
+    pd: Any,
+    columns: Sequence[_ReadColumn],
+    fields: Sequence[str] = (),
+) -> _ReadPlan:
     by_token = _column_tokens(runtime, pd, columns)
-    return _ReadPlan(tuple(columns), tuple(by_token), by_token)
+    return _ReadPlan(tuple(columns), tuple(by_token), by_token, tuple(fields))
 
 
 def _group_rows(
@@ -2496,11 +2581,11 @@ def _capture_runtime_read_layout(stage: Any, pd: Any, runtime: _RuntimeTransport
     token_to_column = _column_tokens(runtime, pd, columns)
     seen = {column.attribute: set() for column in columns}
     if not runtime.paths:
-        runtime.read_plan = _make_read_plan(runtime, pd, columns)
+        runtime.read_plan = _make_read_plan(runtime, pd, columns, tuple(runtime.read_fields))
         return
     with _stage._path_list_query(stage, pd, runtime.paths) as query:
         with stage.read_attributes(query, list(token_to_column), OrdinalRange.latest(ordinal)) as read:
-            read.wait()
+            _stage._wait_for_read(read, ordinal)
             group = read.fetch_next()
             while group is not None:
                 try:
@@ -2533,7 +2618,7 @@ def _capture_runtime_read_layout(stage: Any, pd: Any, runtime: _RuntimeTransport
                 )
         elif not column.slices and not column.expected_rows:
             column.deferred = True
-    runtime.read_plan = _make_read_plan(runtime, pd, columns)
+    runtime.read_plan = _make_read_plan(runtime, pd, columns, tuple(runtime.read_fields))
 
 
 def _topology_changed(column: _ReadColumn, detail: str) -> OvstageContractError:
@@ -2579,7 +2664,7 @@ def _read_runtime_columns(
         raise RuntimeError("runtime ingress cannot run during CUDA graph capture")
     try:
         with stage.read_attributes(query, plan.tokens, OrdinalRange.latest(ordinal)) as read:
-            read.wait()
+            _stage._wait_for_read(read, ordinal)
             group = read.fetch_next()
             while group is not None:
                 groups.append(group)
@@ -2803,6 +2888,7 @@ def _body_read_columns(runtime: _RuntimeTransport) -> List[_ReadColumn]:
             expected,
             consume_pose,
             destination_rows=lambda rows: rows,
+            field_name=_BODY_Q,
         )
     ]
     linear, angular = runtime.linear_in, runtime.angular_in
@@ -2827,6 +2913,7 @@ def _body_read_columns(runtime: _RuntimeTransport) -> List[_ReadColumn]:
                 expected,
                 consume_vector(linear),
                 destination_rows=lambda rows: rows,
+                field_name=_BODY_QD,
             ),
             _ReadColumn(
                 BODY_ANGULAR_VELOCITY,
@@ -2835,6 +2922,7 @@ def _body_read_columns(runtime: _RuntimeTransport) -> List[_ReadColumn]:
                 expected,
                 consume_vector(angular),
                 destination_rows=lambda rows: rows,
+                field_name=_BODY_QD,
             ),
         ]
     )
@@ -2845,7 +2933,7 @@ def _joint_scalar_column(
     runtime: _RuntimeTransport,
     channel: _JointChannel,
     attribute: str,
-    destination: Any,
+    field_name: str,
     destination_indices: Sequence[int],
     query_rows: Sequence[int],
     scale: float,
@@ -2853,6 +2941,7 @@ def _joint_scalar_column(
     kind: str,
     accepted_rows: Optional[frozenset[int]] = None,
 ) -> _ReadColumn:
+    destination = runtime.read_fields[field_name].staging
     destination_by_query = dict(zip(query_rows, destination_indices, strict=True))
 
     def consume(source, source_rows, destination_rows, count):
@@ -2870,6 +2959,7 @@ def _joint_scalar_column(
         expected_rows=expected_rows,
         consume=consume,
         destination_rows=lambda rows: tuple(destination_by_query[row] for row in rows),
+        field_name=field_name,
         kind=kind,
         phase=1,
         accepted_rows=accepted_rows,
@@ -2891,7 +2981,7 @@ def _joint_read_columns(
                 runtime,
                 channel,
                 joint_state(channel.instance, "position"),
-                runtime.joint_q_in,
+                _JOINT_POSITION,
                 channel.q_indices_host,
                 query_rows,
                 scale,
@@ -2904,7 +2994,7 @@ def _joint_read_columns(
                 runtime,
                 channel,
                 joint_state(channel.instance, "velocity"),
-                runtime.joint_qd_in,
+                _JOINT_VELOCITY,
                 channel.qd_indices_host,
                 query_rows,
                 scale,
@@ -2922,7 +3012,7 @@ def _joint_read_columns(
                     runtime,
                     channel,
                     position_attr,
-                    runtime.target_q_in,
+                    _JOINT_POSITION_TARGET,
                     channel.target_q_indices_host,
                     query_rows,
                     scale,
@@ -2937,7 +3027,7 @@ def _joint_read_columns(
                     runtime,
                     channel,
                     velocity_attr,
-                    runtime.target_qd_in,
+                    _JOINT_VELOCITY_TARGET,
                     channel.qd_indices_host,
                     query_rows,
                     scale,
@@ -2975,6 +3065,39 @@ def _combined_runtime_paths(
     return paths, channel_rows
 
 
+def initialize_runtime_selection(binding: Any) -> None:
+    """Own the immutable ingress path list in the binding's stage dictionary."""
+    runtime = binding._runtime
+    if not runtime.paths:
+        return
+    # Register ownership before allocating native handles, including setup failure.
+    path_lists = []
+    weakref.finalize(binding, _destroy_path_lists, binding._pd, path_lists)
+    runtime.read_path_list = binding._pd.create_path_list_from_strings(runtime.paths)
+    path_lists.append(runtime.read_path_list)
+
+
+def _select_read_plan(runtime: _RuntimeTransport, pd: Any, attributes: Sequence[str]) -> _ReadPlan:
+    """Select fields while sharing the full plan's captured column layouts."""
+    supported = tuple(runtime.read_fields)
+    if isinstance(attributes, (str, bytes)):
+        raise ValueError("attributes must be a sequence of field names, not a string")
+    selected = tuple(attributes)
+    if any(not isinstance(name, str) or name not in supported for name in selected):
+        raise ValueError(f"attributes must contain only {supported}")
+    if len(set(selected)) != len(selected):
+        raise ValueError("attributes must not contain duplicates")
+    key = tuple(name for name in supported if name in selected)
+    plan = runtime.read_plans.get(key)
+    if plan is None:
+        if runtime.read_plan is None:
+            raise RuntimeError("runtime read plan was not captured")
+        columns = tuple(column for column in runtime.read_plan.columns if column.field_name in key)
+        plan = _make_read_plan(runtime, pd, columns, key)
+        runtime.read_plans[key] = plan
+    return plan
+
+
 def read_runtime(
     stage: Any,
     pd: Any,
@@ -2983,62 +3106,55 @@ def read_runtime(
     *,
     runtime: _RuntimeTransport,
     control: Any,
+    attributes: Optional[Sequence[str]] = None,
 ) -> None:
-    """Apply every available channel below one sealed read ceiling."""
-    model = runtime.model
-    _validate_body_state(state, model, True)
-    if model.joint_count:
-        _validate_joint_state(state, model)
-    if control is None:
-        raise TypeError("control is required")
-    if not runtime.paths:
-        return
-
-    control_target_q = control.joint_target_q
-    control_target_qd = control.joint_target_qd
-    _validate_control_array(
-        control_target_q,
-        "position-target",
-        int(runtime.target_q_in.shape[0]) if runtime.target_q_in is not None else 0,
-        model.device,
-        required=runtime.position_target_required,
-    )
-    _validate_control_array(
-        control_target_qd,
-        "velocity-target",
-        int(runtime.target_qd_in.shape[0]) if runtime.target_qd_in is not None else 0,
-        model.device,
-        required=runtime.velocity_target_required,
-    )
-
-    if model.joint_count:
-        wp.copy(runtime.joint_q_in, state.joint_q)
-        wp.copy(runtime.joint_qd_in, state.joint_qd)
-    if control_target_q is not None:
-        wp.copy(runtime.target_q_in, control_target_q)
-    if control_target_qd is not None:
-        wp.copy(runtime.target_qd_in, control_target_qd)
-
-    plan = runtime.read_plan
+    """Apply selected fields or a full resync below one sealed read ceiling."""
+    plan = runtime.read_plan if attributes is None else _select_read_plan(runtime, pd, attributes)
     if plan is None:
         raise RuntimeError("runtime read plan was not captured")
+    if control is None:
+        raise TypeError("control is required")
+
+    destinations = []
+    for name in plan.fields:
+        field = runtime.read_fields[name]
+        size = int(field.staging.shape[0]) if field.staging is not None else 0
+        if field.owner == "state":
+            if not size:
+                continue
+            destination = _validate_array(state, field.array, size, runtime.device)
+        else:
+            destination = getattr(control, field.array, None)
+            _validate_control_array(destination, field.array, size, runtime.device, required=field.required)
+        if destination is not None:
+            destinations.append((destination, field))
+
+    if not runtime.paths or not plan.columns:
+        return
+    # Seed staging so unmapped coordinates and absent optional columns survive.
+    for destination, field in destinations:
+        if field.preserve_unmapped:
+            wp.copy(field.staging, destination)
 
     def finish_body_decode() -> None:
-        wp.launch(
-            _decode_velocity_kernel,
-            dim=model.body_count,
-            inputs=[runtime.body_rows, runtime.linear_in, runtime.angular_in, runtime.body_qd_in],
-            device=runtime.device,
-        )
+        if _BODY_QD in plan.fields:
+            wp.launch(
+                _decode_velocity_kernel,
+                dim=runtime.model.body_count,
+                inputs=[runtime.body_rows, runtime.linear_in, runtime.angular_in, runtime.body_qd_in],
+                device=runtime.device,
+            )
+        if attributes is None:
+            _derive_joint_state(
+                runtime,
+                SimpleNamespace(body_q=runtime.body_q_in, body_qd=runtime.body_qd_in),
+                runtime.joint_q_in,
+                runtime.joint_qd_in,
+            )
 
-        _derive_joint_state(
-            runtime,
-            SimpleNamespace(body_q=runtime.body_q_in, body_qd=runtime.body_qd_in),
-            runtime.joint_q_in,
-            runtime.joint_qd_in,
-        )
-
-    with _stage._path_list_query(stage, pd, runtime.paths) as query:
+    if runtime.read_path_list is None:
+        raise RuntimeError("runtime path selection was not initialized")
+    with stage.query_from_path_list(runtime.read_path_list) as query:
         _read_runtime_columns(
             stage,
             query,
@@ -3049,12 +3165,5 @@ def read_runtime(
         )
 
     # Commit only after every requested column has been validated and decoded.
-    wp.copy(state.body_q, runtime.body_q_in)
-    wp.copy(state.body_qd, runtime.body_qd_in)
-    if model.joint_count:
-        wp.copy(state.joint_q, runtime.joint_q_in)
-        wp.copy(state.joint_qd, runtime.joint_qd_in)
-    if control_target_q is not None:
-        wp.copy(control_target_q, runtime.target_q_in)
-    if control_target_qd is not None:
-        wp.copy(control_target_qd, runtime.target_qd_in)
+    for destination, field in destinations:
+        wp.copy(destination, field.staging)

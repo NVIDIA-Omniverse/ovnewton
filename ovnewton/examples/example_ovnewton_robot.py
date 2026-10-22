@@ -127,6 +127,12 @@ def create_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output-dir", default="output", help="Directory used in headless mode")
     parser.add_argument("--headless", action="store_true", help="Skip the viewer and save PNG frames")
     parser.add_argument("--save-png", action="store_true", help="Save rendered frames as PNG files")
+    parser.add_argument(
+        "--render-debug-sync",
+        choices=("true", "false"),
+        default="false",
+        help="Enable OVRTX debug synchronization for diagnostics (default: %(default)s)",
+    )
     parser.add_argument("--timing", action="store_true", help="Print initialization and frame timings")
     return parser
 

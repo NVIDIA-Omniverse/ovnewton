@@ -61,15 +61,7 @@ _JOINT_DOF_ARRAYS = [
 ]
 _JOINT_COORD_ARRAYS = ["joint_target_q"]
 _JOINT_STATE = ["joint_q", "joint_qd", "joint_q_start", "joint_qd_start", "joint_target_q_start"]
-_MIMIC_ARRAYS = [
-    "joint_mimic_joint",
-    "joint_mimic_coeffs",
-    "constraint_mimic_joint0",
-    "constraint_mimic_joint1",
-    "constraint_mimic_coef0",
-    "constraint_mimic_coef1",
-    "constraint_mimic_enabled",
-]
+_MIMIC_ARRAYS = ["joint_mimic_joint", "joint_mimic_coeffs"]
 
 
 def _model_arrays(model):
@@ -87,7 +79,7 @@ def _model_arrays(model):
         a = getattr(model, name, None)
         if a is not None and hasattr(a, "numpy"):
             out[name] = np.asarray(a.numpy())
-    for name in ("body_label", "shape_label", "joint_label", "constraint_mimic_label"):
+    for name in ("body_label", "shape_label", "joint_label"):
         out[name] = np.asarray(list(getattr(model, name, [])), dtype=object)
     out["shape_collision_filter_pairs"] = sorted(getattr(model, "shape_collision_filter_pairs", ()))
     out["shape_mesh"] = [
@@ -112,24 +104,13 @@ def _model_arrays(model):
 
 
 def mimic_signatures(model):
-    """Label-aligned mimic semantics across Newton's old and new storage."""
+    """Label-aligned mimic semantics from Newton's joint-owned storage."""
     labels = model["joint_label"]
-    result = [
-        (labels[int(follower)], labels[int(leader)], float(offset), float(multiplier), bool(enabled))
-        for follower, leader, offset, multiplier, enabled in zip(
-            model["constraint_mimic_joint0"],
-            model["constraint_mimic_joint1"],
-            model["constraint_mimic_coef0"],
-            model["constraint_mimic_coef1"],
-            model["constraint_mimic_enabled"],
-            strict=True,
-        )
-    ]
-    if "joint_mimic_joint" in model:
-        for follower, leader in enumerate(model["joint_mimic_joint"]):
-            if leader >= 0:
-                offset, multiplier = model["joint_mimic_coeffs"][follower]
-                result.append((labels[follower], labels[int(leader)], float(offset), float(multiplier), True))
+    result = []
+    for follower, leader in enumerate(model["joint_mimic_joint"]):
+        if leader >= 0:
+            offset, multiplier = model["joint_mimic_coeffs"][follower]
+            result.append((labels[follower], labels[int(leader)], float(offset), float(multiplier), True))
     return result
 
 

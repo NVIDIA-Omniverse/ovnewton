@@ -13,6 +13,8 @@ import ovstage
 
 import ovnewton
 
+assert_type(ovnewton.population_desc(), ovstage.population.Desc)
+
 
 def check_public_interface(
     stage: ovstage.Stage,
@@ -68,3 +70,4 @@ def check_public_interface(
 
     assert_type(binding.update_to_ovstage(state, ordinal=2), None)
     assert_type(binding.update_from_ovstage(state, control, ordinal=2), None)
+    assert_type(binding.update_from_ovstage(state, control, attributes=("jointPosition", "jointPositionTarget")), None)

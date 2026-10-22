@@ -5,6 +5,7 @@ import newton
 import numpy as np
 import ovstage
 import pytest
+import warp as wp
 from ovstage import PopulationDomain, population
 
 import ovnewton
@@ -23,6 +24,35 @@ def Xform "Body" (
     ) {
         double radius = 0.5
     }
+}
+"""
+
+_MULTI_BODY_STATE = """#usda 1.0
+(
+    metersPerUnit = 1
+    upAxis = "Z"
+)
+def PhysicsScene "Scene" {
+    vector3f physics:gravityDirection = (0, -3, -4)
+    float physics:gravityMagnitude = 10
+}
+def Cube "First" (
+    prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI", "PhysicsMassAPI"]
+) {
+    float physics:mass = 2
+    point3f physics:centerOfMass = (0.1, 0.2, 0.3)
+    double3 xformOp:translate = (1, 2, 3)
+    float3 xformOp:rotateXYZ = (0, 0, 90)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ"]
+}
+def Cube "Second" (
+    prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollisionAPI", "PhysicsMassAPI"]
+) {
+    float physics:mass = 3
+    point3f physics:centerOfMass = (-0.4, 0.5, -0.6)
+    double3 xformOp:translate = (-4, 5, -6)
+    float3 xformOp:rotateXYZ = (90, 0, 0)
+    uniform token[] xformOpOrder = ["xformOp:translate", "xformOp:rotateXYZ"]
 }
 """
 
@@ -261,6 +291,72 @@ def test_add_ovstage_preserves_builder_defaults_and_applies_stage_settings():
     assert model.up_axis == newton.Axis.Y
     np.testing.assert_allclose(model.gravity.numpy()[0], (0.0, -981.0, 0.0))
     np.testing.assert_allclose(model.shape_material_ke.numpy(), 4321.0)
+
+
+@pytest.mark.parametrize("import_api", ["add_ovstage", "attach_ovstage"])
+def test_public_import_preserves_distinct_scalar_vector_and_matrix_rows(import_api):
+    with wp.ScopedDevice("cpu"), ovstage.Stage("multi-body-import") as stage:
+        population.open_usd_from_string(stage, _MULTI_BODY_STATE, ordinal=1, domains=PopulationDomain.PHYSICS)
+        stage.advance_write_floor(ordinal=1).wait()
+
+        if import_api == "add_ovstage":
+            builder = newton.ModelBuilder()
+            ovnewton.add_ovstage(builder, stage)
+            model = builder.finalize()
+        else:
+            model = ovnewton.attach_ovstage(stage).model
+
+        assert set(model.body_label) == {"/First", "/Second"}
+        rows = [model.body_label.index(path) for path in ("/First", "/Second")]
+        np.testing.assert_allclose(model.gravity.numpy()[0], [0, -6, -8], atol=1e-6)
+        np.testing.assert_allclose(model.body_mass.numpy()[rows], [2, 3])
+        np.testing.assert_allclose(model.body_com.numpy()[rows], [[0.1, 0.2, 0.3], [-0.4, 0.5, -0.6]])
+        poses = model.body_q.numpy()[rows]
+        np.testing.assert_allclose(poses[:, :3], [[1, 2, 3], [-4, 5, -6]], atol=1e-6)
+        # Quaternion signs are equivalent; these are 90-degree rotations about Z and X.
+        rotations = [[0, 0, 0.70710678, 0.70710678], [0.70710678, 0, 0, 0.70710678]]
+        np.testing.assert_allclose(np.abs(np.sum(poses[:, 3:] * rotations, axis=1)), [1, 1], atol=1e-6)
+
+
+@pytest.mark.parametrize("device", ["cpu", "cuda:0"])
+def test_public_binding_roundtrips_distinct_body_state(device):
+    if device.startswith("cuda") and not wp.is_cuda_available():
+        pytest.skip("CUDA is unavailable")
+
+    with wp.ScopedDevice(device), ovstage.Stage("multi-body-roundtrip") as stage:
+        population.open_usd_from_string(stage, _MULTI_BODY_STATE, ordinal=1, domains=PopulationDomain.PHYSICS)
+        stage.advance_write_floor(ordinal=1).wait()
+        builder = newton.ModelBuilder()
+        ovnewton.add_ovstage(builder, stage)
+        model = builder.finalize()
+        binding = ovnewton.attach_ovstage(stage, model=model)
+        rows = [model.body_label.index(path) for path in ("/First", "/Second")]
+        expected_poses = np.asarray(
+            [[-7, 8, 9, 0.70710678, 0, 0, 0.70710678], [10, -11, 12, 0, 0, 0.70710678, 0.70710678]],
+            dtype=np.float32,
+        )
+        expected_velocities = np.asarray([[1, 2, 3, 0.1, -0.2, 0.3], [-4, 5, -6, -0.4, 0.5, -0.6]], dtype=np.float32)
+        source = model.state()
+        poses = source.body_q.numpy()
+        velocities = source.body_qd.numpy()
+        poses[rows] = expected_poses
+        velocities[rows] = expected_velocities
+        source.body_q.assign(wp.array(poses, dtype=wp.transformf, device=device))
+        source.body_qd.assign(wp.array(velocities, dtype=wp.spatial_vectorf, device=device))
+        binding.update_to_ovstage(source, ordinal=2)
+        stage.advance_write_floor(ordinal=2).wait()
+
+        destination = model.state()
+        destination.body_q.fill_(float("nan"))
+        destination.body_qd.fill_(float("nan"))
+        binding.update_from_ovstage(destination, model.control(), ordinal=2)
+
+        actual_poses = destination.body_q.numpy()[rows]
+        np.testing.assert_allclose(actual_poses[:, :3], expected_poses[:, :3], atol=1e-5)
+        np.testing.assert_allclose(
+            np.abs(np.sum(actual_poses[:, 3:] * expected_poses[:, 3:], axis=1)), [1, 1], atol=1e-5
+        )
+        np.testing.assert_allclose(destination.body_qd.numpy()[rows], expected_velocities, atol=1e-5)
 
 
 def test_add_ovstage_preserves_builder_joint_defaults_for_d6():

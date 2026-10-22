@@ -9,6 +9,9 @@ Run:
     ovnewton/tests/run.sh ovnewton/tests/test_topology.py
 """
 
+from contextlib import nullcontext
+from types import SimpleNamespace
+
 import numpy as np
 import ovstage
 import pytest
@@ -214,7 +217,8 @@ def test_model_import_batches_initial_columns():
     )
 
 
-def test_fixed_read_rejects_malformed_row_width_instead_of_defaulting():
+@pytest.mark.parametrize("shape", [(3,), (4, 3), (3, 4, 4)])
+def test_fixed_read_rejects_wrong_row_count_instead_of_defaulting(shape):
     class Operation:
         def wait(self):
             return None
@@ -228,7 +232,7 @@ def test_fixed_read_rejects_malformed_row_width_instead_of_defaulting():
         has_data_index_map = False
 
         def array(self, _index):
-            return np.asarray([1.0, 2.0, 3.0], dtype=np.float32)
+            return np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
 
         def data_row_index(self, local):
             return local
@@ -267,5 +271,43 @@ def test_fixed_read_rejects_malformed_row_width_instead_of_defaulting():
         def intern_token(self, _attribute):
             return 1
 
-    with pytest.raises(OvstageContractError, match="3 values for 2 logical rows"):
-        _stage.read_fixed(Stage(), PathDictionary(), object(), "physics:mass", ordinal=1)
+    with pytest.raises(OvstageContractError, match=f"{shape[0]} rows for 2 prims"):
+        _stage.read_fixed(Stage(), PathDictionary(), object(), "test:column", ordinal=1)
+
+
+@pytest.mark.parametrize("is_delete,tensor_count", [(True, 1), (False, 0)], ids=["deleted", "empty"])
+def test_path_reads_advance_after_empty_groups(is_delete, tensor_count):
+    def group(*, is_delete=False, tensor_count=1):
+        return SimpleNamespace(
+            attribute=1,
+            ordinal=1,
+            is_delete=is_delete,
+            tensor_count=tensor_count,
+            prim_count=1,
+            prim_list=object(),
+            has_data_index_map=False,
+            array=lambda _index: np.array([[42]], dtype=np.uint64),
+            data_row_index=lambda local: local,
+            prim_index=lambda local: local,
+        )
+
+    skipped = group(is_delete=is_delete, tensor_count=tensor_count)
+    valid = group()
+    remaining = iter((skipped, valid))
+
+    def release_group(value):
+        # Fail on duplicate release instead of hanging on the same group.
+        assert value is next(remaining)
+
+    read = SimpleNamespace(wait=lambda: None, fetch_next=iter((skipped, valid, None)).__next__)
+    stage = SimpleNamespace(read_attributes=lambda *_args: nullcontext(read), release_group=release_group)
+    pd = SimpleNamespace(
+        intern_token=lambda _attr: 1,
+        get_path_strings=lambda _paths: ["/Body"],
+        path_to_string=lambda _path: "/Body",
+    )
+
+    assert _stage._read_path_columns(stage, pd, object(), ["usd-path"], ordinal=1) == {
+        "usd-path": {"/Body": "/Body"}
+    }
+    assert next(remaining, None) is None

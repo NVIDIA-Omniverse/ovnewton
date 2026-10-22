@@ -1,6 +1,6 @@
 Metadata-Version: 2.5
 Name: ovnewton
-Version: 0.2.0
+Version: 0.2.1
 Summary: Connect the Newton physics engine to ovstage / the Omniverse library ecosystem.
 Project-URL: Repository, https://github.com/NVIDIA-Omniverse/ovnewton
 Project-URL: Documentation, https://nvidia-omniverse.github.io/ovnewton/
@@ -13,11 +13,11 @@ Requires-Python: <3.15,>=3.11
 Requires-Dist: coacd>=1.0.7
 Requires-Dist: fast-simplification>=0.1.13
 Requires-Dist: newton-usd-schemas<0.6,>=0.5.0
-Requires-Dist: newton>=1.6.0
+Requires-Dist: newton>=1.7.0
 Requires-Dist: numpy>=1.26.0; python_version < '3.13'
 Requires-Dist: numpy>=2.1.0; python_version == '3.13'
 Requires-Dist: numpy>=2.3.2; python_version >= '3.14'
-Requires-Dist: ovstage<0.3,>=0.2.0.377349
+Requires-Dist: ovstage==0.3.0.1791986420
 Requires-Dist: physx-usd-schemas<26,>=25.11.1
 Requires-Dist: scipy>=1.11.2; python_version < '3.13'
 Requires-Dist: scipy>=1.14.1; python_version == '3.13'
@@ -26,13 +26,13 @@ Requires-Dist: warp-lang>=1.17.0
 Provides-Extra: assets-audit
 Requires-Dist: gitpython>=3.2.0; extra == 'assets-audit'
 Provides-Extra: dev
-Requires-Dist: newton[importers]>=1.6.0; extra == 'dev'
+Requires-Dist: newton[importers]>=1.7.0; extra == 'dev'
 Requires-Dist: pytest>=8; extra == 'dev'
 Requires-Dist: ruff>=0.15; extra == 'dev'
 Provides-Extra: examples
-Requires-Dist: newton[sim]>=1.6.0; extra == 'examples'
-Requires-Dist: ovrtx<0.6,>=0.5.0.377615; extra == 'examples'
-Requires-Dist: pillow>=12.3.0; extra == 'examples'
+Requires-Dist: newton[sim]>=1.7.0; extra == 'examples'
+Requires-Dist: ovrtx<0.7,>=0.6.0.1791947691; extra == 'examples'
+Requires-Dist: pillow>=13.0.0; extra == 'examples'
 Requires-Dist: pyglet>=2.1; extra == 'examples'
 Description-Content-Type: text/markdown
 
@@ -119,6 +119,9 @@ python -m ovnewton.examples.example_ovnewton_robot
 
 The USD scene in this example is supplied by the application.
 
+`ovnewton.population_desc()` selects physics data and preserves composed schema
+names. Combine it with a rendering descriptor as shown below.
+
 ```python
 import newton
 import ovnewton
@@ -129,11 +132,12 @@ scene_path = "/path/to/scene.usd"
 
 ovnewton.register_usd_schemas()
 stage = ovstage.Stage()
-population.open_usd(
+population.open_usd_with_desc(
     stage,
     scene_path,
     ordinal=1,
-    domains=PopulationDomain.ALL,
+    time=population.DEFAULT_TIME,
+    descs=(population.Desc(domains=PopulationDomain.RENDERING), ovnewton.population_desc()),
 )
 stage.advance_write_floor(1).wait()
 
@@ -158,8 +162,13 @@ binding.update_to_ovstage(state_1, ordinal=2)
 stage.advance_write_floor(2).wait()
 ```
 
-Call `binding.update_from_ovstage(state, control)` before a simulation step to
-apply supported state and drive-target changes from the stage. Use
+Call `binding.update_from_ovstage(state, control)` when you intend to resynchronize
+all supported state and drive targets from the sealed stage. This can overwrite
+live simulation state with older stage values. To update only
+joint targets while preserving live simulation state, pass
+`attributes=("jointPositionTarget", "jointVelocityTarget")`. The same selector
+supports body pose/velocity and single-DOF joint state; see the getting-started
+guide for the field list and synchronization semantics. Use
 `binding.query()` and `binding.read()` to expose selected read-only Newton state
 without publishing it.
 

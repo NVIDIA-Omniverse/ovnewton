@@ -60,6 +60,7 @@ def _solver_spec(newton, solver_name):
             "create_solver": lambda model: newton.solvers.SolverVBD(
                 model,
                 iterations=VBD_SOLVER_ITERATIONS,
+                rigid_compliant_alm=True,
             ),
         },
     }[solver_name]
@@ -95,7 +96,6 @@ class Example:
             import ovnewton
 
             ovnewton.register_usd_schemas()
-            self.renderer = self._create_renderer()
 
             # ── 1. Populate the ovstage scene ────────────────────────
             import ovstage
@@ -109,8 +109,22 @@ class Example:
 
             print(f"ovstage: loading scene {os.path.basename(scene)} ...")
             with wp.ScopedTimer("ovstage init", active=args.timing, synchronize=True):
-                self.stage = ovstage.Stage("ovnewton-basic")
-                population.open_usd(self.stage, scene, ordinal=1, domains=PopulationDomain.ALL)
+                # Use GPU hierarchy computation for OVRTX rendering, including
+                # when Newton simulates on CPU. This keeps child transforms current
+                # with this ovstage build, using the GPU already required by OVRTX.
+                # With --device cpu --no-render, the example stays entirely on CPU.
+                stage_config = None
+                if not args.no_render:
+                    stage_config = ovstage.StageConfig(
+                        runtime_default_hierarchy_computation_model=ovstage.HierarchyComputationModel.GPU_INCREMENTAL
+                    )
+                self.stage = ovstage.Stage("ovnewton-basic", config=stage_config)
+                # OVStage 0.3 QA requires Stage construction before Renderer.
+                self.renderer = self._create_renderer()
+                population.open_usd_with_desc(
+                    self.stage, scene, ordinal=1, time=population.DEFAULT_TIME,
+                    descs=(population.Desc(domains=PopulationDomain.RENDERING), ovnewton.population_desc()),
+                )
                 if apply_vbd_material_override:
                     # Temporary VBD-only USD tuning until these values can be
                     # resolved from solver-specific PhysicsScene attributes.
@@ -241,19 +255,21 @@ class Example:
         if not wp.is_cuda_available():
             raise RuntimeError("ovrtx requires a CUDA device")
 
-        # ovrtx must initialize USD before ovstage is imported.
+        # Schema paths are registered before either native object is created.
         from ovrtx import Renderer, RendererConfig
 
         with wp.ScopedTimer("ovrtx init", active=self.args.timing, synchronize=True):
             render_device_arg = getattr(self.args, "render_device", None)
             render_device = None if render_device_arg is None else str(render_device_arg)
+            render_debug_sync = getattr(self.args, "render_debug_sync", "false") == "true"
             renderer = Renderer(
                 config=RendererConfig(
-                    sync_mode=True,
+                    sync_mode=render_debug_sync,
                     active_cuda_gpus=render_device,
                 )
             )
         print(f"ovrtx: renderer v{renderer.version}")
+        print(f"ovrtx: debug synchronization {'enabled' if render_debug_sync else 'disabled'}")
         if render_device is not None:
             print(f"ovrtx: rendering on CUDA-visible device {render_device}")
         return renderer
@@ -279,6 +295,7 @@ class Example:
                     width=width,
                     height=height,
                     stage=self.stage,
+                    ordinal=self.ordinal,
                 )
             return self.viewport.show(pixels)
 
@@ -347,6 +364,12 @@ class Example:
             type=int,
             default=None,
             help="CUDA-visible device index used by ovrtx; unset uses the ovrtx default",
+        )
+        parser.add_argument(
+            "--render-debug-sync",
+            choices=("true", "false"),
+            default="false",
+            help="Enable OVRTX debug synchronization for diagnostics (default: %(default)s)",
         )
         parser.add_argument(
             "--num-frames",

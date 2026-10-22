@@ -26,7 +26,7 @@ import newton
 import numpy as np
 import warp as wp
 
-from . import _parse, _stage
+from . import _mjc, _parse, _stage
 from ._errors import InvalidPhysicsError, OvstageContractError, UnsupportedPhysicsError, log_diagnostic
 from ._parse import _DofDesc, _JointDesc
 from ._schema_names import (
@@ -36,6 +36,7 @@ from ._schema_names import (
     RIGID_BODY_ENABLED,
     WORLD_MATRIX,
 )
+from ._schemas import _MJC_JOINT_DYNAMICS
 
 # USD gprim/joint axis token -> Newton axis. Shared by collider shape placement
 # (capsule/cylinder/cone) and joint axis selection.
@@ -46,6 +47,11 @@ _DEG_PER_RAD = 180.0 / np.pi  # degrees per radian
 _RAD_PER_DEG = np.pi / 180.0  # radians per degree
 # add_usd lowers the +inf schema sentinel to this finite stiffness.
 _HARD_LIMIT_KE = 1.0e8
+
+# Values consumed by SolverMuJoCo's registered solreflimit_mode attribute.
+_MJC_SOLREF_FORCE_SPACE = 0
+_MJC_SOLREF_RAW = 1
+_MJC_SOLREF_DEFAULT = 2
 
 _MESH_APPROXIMATION_METHOD = {
     "convexDecomposition": "coacd",
@@ -670,18 +676,24 @@ def _finalize_masses(builder: Any, bodies: _Bodies) -> None:
         )
 
 
-def _joint_records(joint_descs: List[Tuple[str, "_JointDesc"]], bodies: _Bodies) -> List[_JointBuildRecord]:
+def _joint_records(
+    joint_descs: List[Tuple[str, "_JointDesc"]], bodies: _Bodies, hierarchy: "_parse._Hierarchy"
+) -> List[_JointBuildRecord]:
     """Resolve scaled anchors; rebase world joints to preserve the body pose."""
     ones = np.ones(3)
     records = []
     for jpath, d in joint_descs:
         for relation, body_path in (("body0", d.body0), ("body1", d.body1)):
             if body_path is not None and body_path not in bodies.index:
+                # USD resolves an existing prim with no rigid ancestor to the world.
+                # Do not silently anchor dangling targets or descendants of a rigid body.
+                if body_path in hierarchy.parents and hierarchy.nearest(body_path, bodies.index) is None:
+                    continue
                 raise InvalidPhysicsError(f"joint {jpath} physics:{relation} targets non-rigid body {body_path}")
-        if d.body0 is None and d.body1 is None:
-            raise InvalidPhysicsError(f"joint {jpath} does not target a rigid body")
         parent = bodies.index.get(d.body0, -1)
         child = bodies.index.get(d.body1, -1)
+        if parent == -1 and child == -1:
+            raise InvalidPhysicsError(f"joint {jpath} does not target a rigid body")
         pos0 = np.array(d.local_pos0) * bodies.scale.get(d.body0, ones)
         pos1 = np.array(d.local_pos1) * bodies.scale.get(d.body1, ones)
         rot0 = np.asarray(d.local_rot0, dtype=float)
@@ -757,7 +769,9 @@ def _order_joints_root_first(records: List[_JointBuildRecord]) -> List[_JointBui
     return ordered
 
 
-def _dof_kw(d: Any, rotational: bool, lo: Optional[float], hi: Optional[float]) -> Dict[str, Any]:
+def _dof_kw(
+    d: Any, rotational: bool, lo: Optional[float], hi: Optional[float], mjc: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
     """Translate one normalized USD degree of freedom into ModelBuilder kwargs."""
     angle = _RAD_PER_DEG if rotational else 1.0
     angular_gain = _DEG_PER_RAD if rotational else 1.0
@@ -805,6 +819,15 @@ def _dof_kw(d: Any, rotational: bool, lo: Optional[float], hi: Optional[float]) 
         kw["actuator_mode"] = newton.JointTargetMode.from_gains(
             d.drive_stiffness or 0.0, d.drive_damping or 0.0, has_drive=True
         )
+    if mjc is not None:
+        for name, attribute in _MJC_JOINT_DYNAMICS.items():
+            if getattr(d, name) is None and attribute in mjc:
+                # MuJoCo angular damping is already per radian.
+                kw[name] = mjc[attribute]
+        reference = mjc.get("mjc:ref", 0.0)
+        for name in ("limit_lower", "limit_upper"):
+            if name in kw:
+                kw[name] -= reference
     return kw
 
 
@@ -852,6 +875,48 @@ def _apply_initial_joint_state(builder: Any, joint: int, d: _DofDesc, dof: int =
         builder.joint_qd[builder.joint_qd_start[joint] + dof] = velocity
 
 
+def _mjc_joint_attributes(builder: Any, source: _ResolvedJoint) -> Dict[str, Any]:
+    """Supply registered solver fields without making MuJoCo an import dependency."""
+    desc = source.desc
+    if desc.mjc_properties is None:
+        return {}
+    attributes = _mjc.joint_custom_attributes(builder, desc.mjc_properties, source.path)
+    defaults = builder.default_joint_cfg
+    canonical = newton.ModelBuilder.JointDofConfig()
+    custom_limits = defaults.limit_ke != canonical.limit_ke or defaults.limit_kd != canonical.limit_kd
+    for index, dof in enumerate(sorted(desc.dofs, key=lambda d: d.rotational)):
+        kw = _dof_kw(dof, dof.rotational, dof.limit_lower, dof.limit_upper, desc.mjc_properties)
+        mode = (
+            _MJC_SOLREF_FORCE_SPACE
+            if custom_limits or "limit_ke" in kw or "limit_kd" in kw
+            else _MJC_SOLREF_DEFAULT
+        )
+        if "mjc:solreflimit" in desc.mjc_properties:
+            mode = _MJC_SOLREF_RAW
+        elif (
+            mode == _MJC_SOLREF_DEFAULT
+            and "mujoco:solreflimit_mode" in builder.custom_attributes
+            and (dof.broadcast_limit_stiffness is not None or dof.broadcast_limit_damping is not None)
+        ):
+            # An authored -inf means force-space engine defaults; an identical
+            # schema fallback permits MJCF defaults. Population loses that distinction.
+            raise UnsupportedPhysicsError(
+                f"ambiguous Newton limit defaults at {source.path}; "
+                "author finite Newton limit gains or mjc:solreflimit, or use a single joint parameter namespace"
+            )
+        for name, value in (
+            ("solreflimit_mode", mode),
+            (
+                "solreflimit_gain_baseline",
+                wp.vec2(kw.get("limit_ke", defaults.limit_ke), kw.get("limit_kd", defaults.limit_kd)),
+            ),
+        ):
+            key = f"mujoco:{name}"
+            if key in builder.custom_attributes:
+                attributes.setdefault(key, {})[index] = value
+    return attributes
+
+
 def _add_merged_d6(builder: Any, record: _JointBuildRecord) -> int:
     """Merge same-body-pair axes into the first joint's D6 frame."""
     group = record.sources
@@ -876,13 +941,17 @@ def _add_merged_d6(builder: Any, record: _JointBuildRecord) -> int:
         lo = None if dof.limit_lower == float("-inf") else dof.limit_lower
         hi = None if dof.limit_upper == float("inf") else dof.limit_upper
         if d.prim_type == "PhysicsRevoluteJoint":
-            kw: Dict[str, Any] = _dof_kw(dof, True, lo, hi)
+            kw: Dict[str, Any] = _dof_kw(dof, True, lo, hi, d.mjc_properties)
             angular.append(_joint_dof_config(builder, axis, kw))
             angular_records.append(r)
         else:  # PhysicsPrismaticJoint — linear DOF, no unit conversion
-            kw = _dof_kw(dof, False, lo, hi)
+            kw = _dof_kw(dof, False, lo, hi, d.mjc_properties)
             linear.append(_joint_dof_config(builder, axis, kw))
             linear_records.append(r)
+    attributes = {}
+    for index, source in enumerate(linear_records + angular_records):
+        for key, value in _mjc_joint_attributes(builder, source).items():
+            attributes.setdefault(key, {})[index] = value[0] if isinstance(value, dict) else value
     joint = builder.add_joint_d6(
         parent=record.parent,
         child=record.child,
@@ -892,6 +961,7 @@ def _add_merged_d6(builder: Any, record: _JointBuildRecord) -> int:
         angular_axes=angular or None,
         # One disabling source joint wins for the merged body pair.
         collision_filter_parent=any(not r.desc.collision_enabled for r in group),
+        custom_attributes=attributes,
     )
     # Newton D6 coordinate/DOF order is linear first, then angular.
     for dof, r in enumerate(linear_records + angular_records):
@@ -908,11 +978,12 @@ def _add_joint(builder: Any, record: _JointBuildRecord) -> int:
     source = record.sources[0]
     d = source.desc
     collision_filter_parent = not d.collision_enabled
+    attributes = _mjc_joint_attributes(builder, source)
     if d.prim_type == "PhysicsRevoluteJoint":
         dof = d.dofs[0]
         lo = None if dof.limit_lower == float("-inf") else dof.limit_lower
         hi = None if dof.limit_upper == float("inf") else dof.limit_upper
-        rkw = _dof_kw(dof, True, lo, hi)
+        rkw = _dof_kw(dof, True, lo, hi, d.mjc_properties)
         joint = builder.add_joint_revolute(
             parent=record.parent,
             child=record.child,
@@ -921,12 +992,13 @@ def _add_joint(builder: Any, record: _JointBuildRecord) -> int:
             axis=dof.axis,
             collision_filter_parent=collision_filter_parent,
             **rkw,
+            custom_attributes=attributes,
         )
     elif d.prim_type == "PhysicsPrismaticJoint":
         dof = d.dofs[0]
         lo = None if dof.limit_lower == float("-inf") else dof.limit_lower
         hi = None if dof.limit_upper == float("inf") else dof.limit_upper
-        pkw = _dof_kw(dof, False, lo, hi)
+        pkw = _dof_kw(dof, False, lo, hi, d.mjc_properties)
         joint = builder.add_joint_prismatic(
             parent=record.parent,
             child=record.child,
@@ -935,6 +1007,7 @@ def _add_joint(builder: Any, record: _JointBuildRecord) -> int:
             axis=dof.axis,
             collision_filter_parent=collision_filter_parent,
             **pkw,
+            custom_attributes=attributes,
         )
     elif d.prim_type == "PhysicsFixedJoint":
         return builder.add_joint_fixed(
@@ -966,7 +1039,7 @@ def _add_joint(builder: Any, record: _JointBuildRecord) -> int:
         linear = []
         angular = []
         for dof in d.dofs:
-            kw = _dof_kw(dof, dof.rotational, dof.limit_lower, dof.limit_upper)
+            kw = _dof_kw(dof, dof.rotational, dof.limit_lower, dof.limit_upper, d.mjc_properties)
             config = _joint_dof_config(builder, dof.axis, kw)
             (angular if dof.rotational else linear).append((config, dof))
         joint = builder.add_joint_d6(
@@ -977,6 +1050,7 @@ def _add_joint(builder: Any, record: _JointBuildRecord) -> int:
             linear_axes=[config for config, _ in linear] or None,
             angular_axes=[config for config, _ in angular] or None,
             collision_filter_parent=collision_filter_parent,
+            custom_attributes=attributes,
         )
         for offset, (_, dof) in enumerate(linear + angular):
             _apply_initial_joint_state(builder, joint, dof, offset)
@@ -1074,7 +1148,7 @@ def _build_joints(
     articulation_self_collisions: Optional[Dict[str, bool]] = None,
 ) -> Tuple[bool, Dict[str, int]]:
     """Build rooted articulations and add all remaining joints as orphans."""
-    records = _joint_records(joint_descs, bodies)
+    records = _joint_records(joint_descs, bodies, hierarchy)
     included = [record for record in records if not record.sources[0].desc.excluded_from_articulation]
     excluded = [record for record in records if record.sources[0].desc.excluded_from_articulation]
     components = _joint_components(included)
@@ -1147,21 +1221,10 @@ def _build_mimics(builder: Any, mimics: List[Dict[str, Any]], joint_by_path: Dic
         coef0 = mimic["coef0"]
         if mimic["rotational"]:
             coef0 = math.radians(coef0)
-        set_joint_mimic = getattr(builder, "set_joint_mimic", None)
-        if set_joint_mimic is not None:
-            # Newer solvers consume per-joint mimics, not legacy constraints.
-            try:
-                set_joint_mimic(follower, leader, coeffs=(coef0, mimic["coef1"]))
-            except ValueError as exc:
-                raise InvalidPhysicsError(f"NewtonMimicAPI at {mimic['path']}: {exc}") from exc
-        else:
-            builder.add_constraint_mimic(
-                joint0=follower,
-                joint1=leader,
-                coef0=coef0,
-                coef1=mimic["coef1"],
-                label=mimic["path"],
-            )
+        try:
+            builder.set_joint_mimic(follower, leader, coeffs=(coef0, mimic["coef1"]))
+        except ValueError as exc:
+            raise InvalidPhysicsError(f"NewtonMimicAPI at {mimic['path']}: {exc}") from exc
 
 
 _R3 = [0, 1, 2, 4, 5, 6, 8, 9, 10]  # flat row-major indices of the upper-left 3x3
@@ -1568,7 +1631,8 @@ def add_ovstage(builder: Any, stage: Any, pd: Any, ordinal: int = 1) -> bool:
         },
     )
 
-    joint_descs = _parse.read_joints(stage, pd, ordinal, hierarchy=hierarchy)
+    equalities, joint_equalities = _mjc.read_equalities(stage, pd, ordinal, hierarchy)
+    joint_descs = _parse.read_joints(stage, pd, ordinal, hierarchy=hierarchy, equality_paths=equalities)
 
     # Bodies a joint references use add_link (the joint is their sole connection);
     # the rest are free bodies (implicit free joint).
@@ -1758,6 +1822,10 @@ def add_ovstage(builder: Any, stage: Any, pd: Any, ordinal: int = 1) -> bool:
         exact = shape_by_path.get(path)
         if exact is not None:
             return [exact]
+        body = bodies.index.get(path)
+        if body is not None:
+            # A body owns its shapes, not those of nested rigid bodies.
+            return list(builder.body_shapes.get(body, ()))
         return [shape for collider_path, shape in shape_by_path.items() if hierarchy.contains(path, collider_path)]
 
     for source, target in _parse.read_filtered_pairs(stage, pd, ordinal):
@@ -1766,7 +1834,11 @@ def add_ovstage(builder: Any, stage: Any, pd: Any, ordinal: int = 1) -> bool:
         if not source_shapes or not target_shapes:
             raise InvalidPhysicsError(f"filtered pair {source} -> {target} does not resolve to collision shapes")
         for shape0 in source_shapes:
+            if not builder.shape_flags[shape0] & newton.ShapeFlags.COLLIDE_SHAPES:
+                continue
             for shape1 in target_shapes:
+                if not builder.shape_flags[shape1] & newton.ShapeFlags.COLLIDE_SHAPES:
+                    continue
                 if shape0 != shape1:
                     builder.add_shape_collision_filter_pair(shape0, shape1)
 
@@ -1785,6 +1857,8 @@ def add_ovstage(builder: Any, stage: Any, pd: Any, ordinal: int = 1) -> bool:
         articulation_self_collisions=_parse.read_articulation_self_collisions(stage, pd, ordinal),
     )
     _build_mimics(builder, _parse.read_mimics(stage, pd, ordinal), joint_by_path)
+    _mjc.build_joint_equalities(builder, joint_equalities, joint_by_path)
+    has_orphan_joints = _mjc.build_equalities(builder, equalities, bodies.index, bodies.scale) or has_orphan_joints
     _initialize_free_joint_velocities(builder)
     from . import _deformables  # noqa: PLC0415
 

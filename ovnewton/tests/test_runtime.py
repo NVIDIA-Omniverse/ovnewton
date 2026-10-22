@@ -25,8 +25,6 @@ import ovnewton
 from ovnewton._src import _build, _runtime, _stage
 from ovnewton._src._errors import OvstageContractError
 
-from .runtime_helpers import lanes_tensor
-
 DRIVEN_REVOLUTE = """#usda 1.0
 (
     metersPerUnit = 1
@@ -90,6 +88,48 @@ DRIVEN_PRISMATIC = (
     .replace(":angular", ":linear")
     .replace('physics:axis = "Z"', 'physics:axis = "X"')
 )
+
+
+FLOATING_BASE_DRIVEN_REVOLUTE = """#usda 1.0
+(
+    metersPerUnit = 1
+    upAxis = "Z"
+)
+def Xform "Base" (
+    apiSchemas = ["PhysicsArticulationRootAPI", "PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+)
+{
+    bool physics:kinematicEnabled = 0
+    float physics:mass = 1
+    float3 physics:diagonalInertia = (1, 1, 1)
+    vector3f physics:velocity = (0, 0, 0)
+    vector3f physics:angularVelocity = (0, 0, 0)
+}
+def Xform "Arm" (
+    apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]
+)
+{
+    float physics:mass = 1
+    float3 physics:diagonalInertia = (1, 1, 1)
+    vector3f physics:velocity = (0, 0, 0)
+    vector3f physics:angularVelocity = (0, 0, 0)
+}
+def PhysicsRevoluteJoint "Joint" (
+    apiSchemas = ["PhysicsDriveAPI:angular", "PhysicsJointStateAPI:angular"]
+)
+{
+    rel physics:body0 = </Base>
+    rel physics:body1 = </Arm>
+    uniform token physics:axis = "Z"
+    float drive:angular:physics:targetPosition = 5
+    float drive:angular:physics:targetVelocity = 6
+    float drive:angular:physics:stiffness = 10
+    float drive:angular:physics:damping = 2
+    float drive:angular:physics:maxForce = 100
+    float state:angular:physics:position = 1
+    float state:angular:physics:velocity = 2
+}
+"""
 
 
 FALLING_BODY = """#usda 1.0
@@ -220,7 +260,7 @@ def _write_scalar(stage, pd, path, attribute, value, ordinal):
             query,
             attribute,
             ordinal,
-            lanes_tensor(np.asarray([value], dtype=np.float32), 1),
+            ovstage.make_dltensor(np.asarray([value], dtype=np.float32)),
             is_array=False,
         ).wait()
 
@@ -240,8 +280,7 @@ def _single_dof_indices(model, expected_type):
     joint = next(i for i, joint_type in enumerate(joint_types) if int(joint_type) == int(expected_type))
     q_index = int(model.joint_q_start.numpy()[joint])
     qd_index = int(model.joint_qd_start.numpy()[joint])
-    target_starts = getattr(model, "joint_target_q_start", None)
-    target_q_index = int(target_starts.numpy()[joint]) if target_starts is not None else qd_index
+    target_q_index = int(model.joint_target_q_start.numpy()[joint])
     return q_index, qd_index, target_q_index
 
 
@@ -266,7 +305,9 @@ def test_runtime_configuration_arguments_are_keyword_only():
     assert from_stage["state"].kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
     assert tuple(to_stage) == ("self", "state", "ordinal")
     assert to_stage["ordinal"].kind is inspect.Parameter.KEYWORD_ONLY
-    assert tuple(from_stage) == ("self", "state", "control", "ordinal")
+    assert tuple(from_stage) == ("self", "state", "control", "ordinal", "attributes")
+    assert from_stage["attributes"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert from_stage["attributes"].default is None
     assert from_stage["control"].kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
     assert from_stage["ordinal"].kind is inspect.Parameter.KEYWORD_ONLY
     assert from_stage["control"].default is inspect.Parameter.empty
@@ -313,7 +354,7 @@ def test_ingress_uses_latest_sealed_payload_and_rejects_historical_read():
 
         with pytest.raises(
             OvstageContractError,
-            match="payload ordinal 3 newer than requested ordinal 2",
+            match="requested ordinal 2",
         ):
             binding.update_from_ovstage(destination, control=control, ordinal=2)
 
@@ -329,7 +370,7 @@ def test_attach_rejects_payload_newer_than_requested_ordinal():
         binding.update_to_ovstage(state, ordinal=2)
         stage.advance_write_floor(ordinal=2).wait()
 
-        with pytest.raises(OvstageContractError, match="newer than requested ordinal 1"):
+        with pytest.raises(OvstageContractError, match="requested ordinal 1"):
             ovnewton.attach_ovstage(stage, ordinal=1)
 
 
@@ -503,22 +544,21 @@ def test_prismatic_state_and_drive_targets_share_one_snapshot():
 
 
 def test_coordinate_layout_drive_target():
-    previous = newton.use_coord_layout_targets
-    newton.use_coord_layout_targets = True
-    try:
-        with ovstage.Stage("runtime-coordinate-layout") as stage, ovstage.PathDictionary(stage) as pd:
-            _populate(stage, DRIVEN_REVOLUTE)
-            binding = ovnewton.attach_ovstage(stage)
-            model = binding.model
-            _, _, target_q_index = _revolute_indices(model)
-            _write_scalar(stage, pd, "/Joint", "drive:angular:physics:targetPosition", 40.0, 2)
-            stage.advance_write_floor(ordinal=2).wait()
+    # A floating articulation base makes coordinate and DOF indices differ.
+    with ovstage.Stage("runtime-coordinate-layout") as stage, ovstage.PathDictionary(stage) as pd:
+        _populate(stage, FLOATING_BASE_DRIVEN_REVOLUTE)
+        binding = ovnewton.attach_ovstage(stage)
+        model = binding.model
+        q_index, qd_index, target_q_index = _revolute_indices(model)
+        assert q_index != qd_index
+        assert target_q_index == q_index
+        _write_scalar(stage, pd, "/Joint", "drive:angular:physics:targetPosition", 40.0, 2)
+        stage.advance_write_floor(ordinal=2).wait()
 
-            control = model.control()
-            binding.update_from_ovstage(model.state(), control=control, ordinal=2)
-            assert control.joint_target_q.numpy()[target_q_index] == pytest.approx(np.deg2rad(40.0))
-    finally:
-        newton.use_coord_layout_targets = previous
+        control = model.control()
+        assert control.joint_target_q.shape == (model.joint_coord_count,)
+        binding.update_from_ovstage(model.state(), control=control, ordinal=2)
+        assert control.joint_target_q.numpy()[target_q_index] == pytest.approx(np.deg2rad(40.0))
 
 
 @pytest.mark.parametrize(
@@ -612,15 +652,45 @@ def test_runtime_batches_reads_and_pipelines_writes():
         assert all(bool(write.cuda_event) == expected_event for batch in batches for write in batch)
 
 
+@pytest.mark.parametrize("device", ["cpu", "cuda:0"])
+def test_repeated_publication_reuses_queries(monkeypatch, device):
+    if device == "cuda:0" and not wp.is_cuda_available():
+        pytest.skip("CUDA is unavailable")
+
+    with wp.ScopedDevice(device), ovstage.Stage("runtime-reuse-publication") as stage:
+        _populate(stage, DRIVEN_REVOLUTE)
+        binding = ovnewton.attach_ovstage(stage)
+
+        def unexpected_query(*_args):
+            raise AssertionError("publication must reuse its fixed queries")
+
+        for ordinal in (2, 3):
+            state = _shifted_state(binding.model, (ordinal, 0, 0), (1, 2, 3, 0.1, 0.2, 0.3))
+            with monkeypatch.context() as patch:
+                patch.setattr(stage, "query_from_path_list", unexpected_query)
+                binding.update_to_ovstage(state, ordinal=ordinal)
+            stage.advance_write_floor(ordinal).wait()
+            restored = binding.model.state()
+            binding.update_from_ovstage(restored, binding.model.control(), ordinal=ordinal)
+            np.testing.assert_allclose(restored.body_q.numpy(), state.body_q.numpy(), atol=1e-5)
+            np.testing.assert_allclose(restored.body_qd.numpy(), state.body_qd.numpy(), atol=1e-5)
+
+
 def test_runtime_owns_each_publication_path_list_once(monkeypatch):
     with ovstage.Stage("runtime-publication-path-lists") as stage:
         _populate(stage, DRIVEN_REVOLUTE)
         binding = ovnewton.attach_ovstage(stage)
         path_dictionary = binding._pd
+        queries = [query for query, _ in binding._publication_batches]
+        assert queries and all(not query._released for query in queries)
+        released_before_path = []
         destroyed = []
         destroy_path_list = path_dictionary.destroy_path_list
 
         def tracked_destroy(path_list):
+            for query in queries:
+                if query._path_list == path_list:
+                    released_before_path.append(query._released)
             destroyed.append(path_list)
             destroy_path_list(path_list)
 
@@ -630,27 +700,50 @@ def test_runtime_owns_each_publication_path_list_once(monkeypatch):
         gc.collect()
 
         assert binding_ref() is None
+        assert all(query._released for query in queries)
+        assert released_before_path == [True] * len(queries)
         assert destroyed
         assert len(destroyed) == len(set(destroyed))
 
 
-def test_runtime_releases_publication_path_lists_when_setup_fails(monkeypatch):
+@pytest.mark.parametrize("failure", ["query", "descriptor"])
+def test_runtime_releases_publication_resources_when_setup_fails(monkeypatch, failure):
     destroyed = []
+    queries = []
+    writes = []
     destroy_path_lists = _runtime._destroy_path_lists
+    publication_write = _runtime._publication_write
 
     def tracked_destroy(path_dictionary, path_lists):
+        for query in queries:
+            if query._path_list in path_lists:
+                assert query._released
         destroyed.extend(path_lists)
         destroy_path_lists(path_dictionary, path_lists)
 
-    def fail_finalizer(*_args):
-        raise RuntimeError("publication finalizer failed")
+    def failing_write(*args, **kwargs):
+        if len(writes) == 4:
+            raise RuntimeError("publication setup failed")
+        writes.append(None)
+        return publication_write(*args, **kwargs)
 
     monkeypatch.setattr(_runtime, "_destroy_path_lists", tracked_destroy)
-    monkeypatch.setattr(_runtime, "_finalize_path_lists", fail_finalizer)
+    monkeypatch.setattr(_runtime, "_publication_write", failing_write)
     with ovstage.Stage("runtime-publication-setup-failure") as stage:
         _populate(stage, DRIVEN_REVOLUTE)
-        with pytest.raises(RuntimeError, match="publication finalizer failed"):
+        create_query = stage.query_from_path_list
+
+        def tracked_query(path_list):
+            if failure == "query" and len(writes) == 4:
+                raise RuntimeError("publication setup failed")
+            query = create_query(path_list)
+            queries.append(query)
+            return query
+
+        monkeypatch.setattr(stage, "query_from_path_list", tracked_query)
+        with pytest.raises(RuntimeError, match="publication setup failed"):
             ovnewton.attach_ovstage(stage)
+        assert queries and all(query._released for query in queries)
 
     assert len(destroyed) == 2
     assert len(destroyed) == len(set(destroyed))
@@ -1049,3 +1142,276 @@ def Xform "Free" (prepend apiSchemas = ["PhysicsRigidBodyAPI"]) {
             destination.joint_qd.numpy()[int(qd_start[d6]) : int(qd_start[d6 + 1])],
             joint_qd[int(qd_start[d6]) : int(qd_start[d6 + 1])],
         )
+
+
+@pytest.fixture(params=["cpu", "cuda:0"])
+def ingress_device(request):
+    if request.param == "cuda:0" and not wp.is_cuda_available():
+        pytest.skip("CUDA is unavailable")
+    with wp.ScopedDevice(request.param):
+        yield request.param
+
+
+@pytest.mark.parametrize(
+    "scene,instance,scale",
+    [
+        (FLOATING_BASE_DRIVEN_REVOLUTE, "angular", np.pi / 180),
+        (DRIVEN_PRISMATIC, "linear", 1.0),
+    ],
+    ids=["floating-revolute", "prismatic"],
+)
+@pytest.mark.parametrize(
+    "attributes",
+    [
+        ("jointPositionTarget",),
+        ("jointVelocityTarget",),
+        ("jointPositionTarget", "jointVelocityTarget"),
+        ("body_q",),
+        ("body_qd",),
+        ("jointPosition",),
+        ("jointVelocity",),
+        ("body_qd", "jointPosition", "jointVelocityTarget"),
+    ],
+)
+def test_selective_fields_preserve_unselected_state_and_control(ingress_device, scene, instance, scale, attributes):
+    with ovstage.Stage("selective-targets") as stage, ovstage.PathDictionary(stage) as pd:
+        _populate(stage, scene)
+        binding = ovnewton.attach_ovstage(stage)
+        model = binding.model
+        joint_type = newton.JointType.REVOLUTE if instance == "angular" else newton.JointType.PRISMATIC
+        q_index, qd_index, target_q_index = _single_dof_indices(model, joint_type)
+        state = _shifted_state(model, (3, 0, 0), (1, 2, 3, 0.1, 0.2, 0.3))
+        state.joint_q.fill_(0.25)
+        state.joint_qd.fill_(0.75)
+        control = model.control()
+        control.joint_target_q.fill_(0.5)
+        control.joint_target_qd.fill_(1.5)
+        before = {name: getattr(state, name).numpy().copy() for name in ("body_q", "body_qd", "joint_q", "joint_qd")}
+        expected = {name: values.copy() for name, values in before.items()}
+        external = _shifted_state(model, (7, 8, 9), (2, 3, 4, 0.4, 0.5, 0.6))
+        binding.update_to_ovstage(external, ordinal=2)
+        for name in ("body_q", "body_qd"):
+            if name in attributes:
+                expected[name] = getattr(external, name).numpy().copy()
+        if "jointPosition" in attributes:
+            expected["joint_q"][q_index] = 20 * scale
+        if "jointVelocity" in attributes:
+            expected["joint_qd"][qd_index] = 30 * scale
+        _write_scalar(stage, pd, "/Joint", f"state:{instance}:physics:position", 20, 2)
+        _write_scalar(stage, pd, "/Joint", f"state:{instance}:physics:velocity", 30, 2)
+        expected_q = control.joint_target_q.numpy().copy()
+        expected_qd = control.joint_target_qd.numpy().copy()
+        if "jointPositionTarget" in attributes:
+            expected_q[target_q_index] = 40 * scale
+        if "jointVelocityTarget" in attributes:
+            expected_qd[qd_index] = 50 * scale
+        _write_scalar(stage, pd, "/Joint", f"drive:{instance}:physics:targetPosition", 40, 2)
+        _write_scalar(stage, pd, "/Joint", f"drive:{instance}:physics:targetVelocity", 50, 2)
+        stage.advance_write_floor(2).wait()
+
+        # Repeated selections apply the same sealed values without touching other fields.
+        for ordinal in (2, None):
+            binding.update_from_ovstage(state, control, ordinal=ordinal, attributes=attributes)
+            for name, value in expected.items():
+                if (
+                    name in attributes
+                    or (name == "joint_q" and "jointPosition" in attributes)
+                    or (name == "joint_qd" and "jointVelocity" in attributes)
+                ):
+                    np.testing.assert_allclose(getattr(state, name).numpy(), value, atol=1e-6)
+                else:
+                    np.testing.assert_array_equal(getattr(state, name).numpy(), value)
+            np.testing.assert_allclose(control.joint_target_q.numpy(), expected_q)
+            np.testing.assert_allclose(control.joint_target_qd.numpy(), expected_qd)
+
+
+def test_selective_targets_ignore_unselected_missing_columns(ingress_device):
+    with ovstage.Stage("selective-unrelated-delete") as stage, ovstage.PathDictionary(stage) as pd:
+        _populate(stage, DRIVEN_REVOLUTE)
+        binding = ovnewton.attach_ovstage(stage)
+        state, control = binding.model.state(), binding.model.control()
+        _, _, target_q_index = _revolute_indices(binding.model)
+        _write_scalar(stage, pd, "/Joint", "drive:angular:physics:targetPosition", 40, 2)
+        with _stage._path_list_query(stage, pd, ["/Joint"]) as query:
+            stage.delete_attributes(
+                query, ["state:angular:physics:position", "drive:angular:physics:targetVelocity"], 2
+            ).wait()
+        with _stage._path_list_query(stage, pd, binding.model.body_label) as query:
+            stage.delete_attributes(query, ["physics:velocity"], 2).wait()
+        stage.advance_write_floor(2).wait()
+        binding.update_from_ovstage(state, control, attributes=("jointPositionTarget",))
+        assert control.joint_target_q.numpy()[target_q_index] == pytest.approx(np.deg2rad(40))
+        with pytest.raises(OvstageContractError):
+            binding.update_from_ovstage(state, control)
+
+
+def test_selective_fields_fail_atomically_on_missing_column_and_old_snapshot(ingress_device):
+    with ovstage.Stage("selective-atomicity") as stage, ovstage.PathDictionary(stage) as pd:
+        _populate(stage, DRIVEN_REVOLUTE)
+        binding = ovnewton.attach_ovstage(stage)
+        state = _shifted_state(binding.model, (3, 4, 5), (1, 2, 3, 0.1, 0.2, 0.3))
+        control = binding.model.control()
+        control.joint_target_q.fill_(0.5)
+        control.joint_target_qd.fill_(1.5)
+        before_q = control.joint_target_q.numpy().copy()
+        before_qd = control.joint_target_qd.numpy().copy()
+        before_body = state.body_q.numpy().copy()
+        _write_scalar(stage, pd, "/Joint", "drive:angular:physics:targetPosition", 40, 2)
+        stage.advance_write_floor(2).wait()
+        with pytest.raises(OvstageContractError, match="requested ordinal 1"):
+            binding.update_from_ovstage(state, control, ordinal=1, attributes=("jointPositionTarget",))
+        with pytest.raises(ValueError, match="newer than the sealed write floor"):
+            binding.update_from_ovstage(state, control, ordinal=3, attributes=("jointPositionTarget",))
+        with _stage._path_list_query(stage, pd, ["/Joint"]) as query:
+            stage.delete_attributes(query, ["drive:angular:physics:targetPosition"], 3).wait()
+        stage.advance_write_floor(3).wait()
+        with pytest.raises(OvstageContractError, match="targetPosition"):
+            binding.update_from_ovstage(
+                state, control, attributes=("body_q", "jointPositionTarget", "jointVelocityTarget")
+            )
+        np.testing.assert_array_equal(control.joint_target_q.numpy(), before_q)
+        np.testing.assert_array_equal(control.joint_target_qd.numpy(), before_qd)
+        np.testing.assert_array_equal(state.body_q.numpy(), before_body)
+
+
+@pytest.mark.parametrize(
+    "attributes",
+    [
+        "jointPositionTarget",
+        ("mass",),
+        ("jointPositionTarget", "typo"),
+        ("jointPositionTarget", "jointPositionTarget"),
+        (None,),
+    ],
+)
+def test_selective_fields_reject_invalid_selection(attributes):
+    with wp.ScopedDevice("cpu"), ovstage.Stage("selective-invalid") as stage:
+        _populate(stage, DRIVEN_REVOLUTE)
+        binding = ovnewton.attach_ovstage(stage)
+        state, control = binding.model.state(), binding.model.control()
+
+        with pytest.raises(ValueError, match="attributes"):
+            binding.update_from_ovstage(state, control, attributes=attributes)
+
+
+def test_selective_fields_empty_selection_is_noop():
+    with wp.ScopedDevice("cpu"), ovstage.Stage("selective-empty") as stage:
+        _populate(stage, DRIVEN_REVOLUTE)
+        binding = ovnewton.attach_ovstage(stage)
+        state = _shifted_state(binding.model, (3, 0, 0), (1, 2, 3, 0, 0, 0))
+        control = binding.model.control()
+        arrays = (
+            state.body_q,
+            state.body_qd,
+            state.joint_q,
+            state.joint_qd,
+            control.joint_target_q,
+            control.joint_target_qd,
+        )
+        before = [array.numpy().copy() for array in arrays]
+        # Even a missing required stage column is irrelevant to an empty selection.
+        with _stage._path_list_query(stage, binding._pd, ["/Joint"]) as query:
+            stage.delete_attributes(query, ["drive:angular:physics:targetPosition"], 2).wait()
+        stage.advance_write_floor(2).wait()
+
+        binding.update_from_ovstage(state, control, attributes=())
+        for array, expected in zip(arrays, before, strict=True):
+            np.testing.assert_array_equal(array.numpy(), expected)
+        with pytest.raises(OvstageContractError, match="targetPosition"):
+            binding.update_from_ovstage(state, control)
+
+
+def test_selective_targets_drive_solver_like_direct_control(ingress_device):
+    scene = DRIVEN_PRISMATIC.replace("physics:collisionEnabled = 1", "physics:collisionEnabled = 0")
+    scene = scene.replace("physics:gravityMagnitude = 9.81", "physics:gravityMagnitude = 0")
+    with ovstage.Stage("selective-physical-outcome") as stage, ovstage.PathDictionary(stage) as pd:
+        _populate(stage, scene)
+        binding = ovnewton.attach_ovstage(stage)
+        model = binding.model
+        _, _, target_q_index = _single_dof_indices(model, newton.JointType.PRISMATIC)
+        selected, selected_next = model.state(), model.state()
+        direct, direct_next = model.state(), model.state()
+        newton.eval_fk(model, model.joint_q, model.joint_qd, selected)
+        newton.eval_fk(model, model.joint_q, model.joint_qd, direct)
+        initial = selected.body_q.numpy().copy()
+        selected_control, direct_control = model.control(), model.control()
+        expected_target = direct_control.joint_target_q.numpy().copy()
+        expected_target[target_q_index] = 0.25
+        direct_control.joint_target_q.assign(expected_target)
+        _write_scalar(stage, pd, "/Joint", "drive:linear:physics:targetPosition", 0.25, 2)
+        stage.advance_write_floor(2).wait()
+        selected_solver = newton.solvers.SolverXPBD(model, iterations=8)
+        direct_solver = newton.solvers.SolverXPBD(model, iterations=8)
+        pipeline = newton.CollisionPipeline(model)
+        contacts = pipeline.contacts()
+        for _ in range(60):
+            binding.update_from_ovstage(selected, selected_control, attributes=("jointPositionTarget",))
+            selected.clear_forces()
+            direct.clear_forces()
+            pipeline.collide(selected, contacts)
+            selected_solver.step(selected, selected_next, selected_control, contacts, 1 / 120)
+            pipeline.collide(direct, contacts)
+            direct_solver.step(direct, direct_next, direct_control, contacts, 1 / 120)
+            selected, selected_next = selected_next, selected
+            direct, direct_next = direct_next, direct
+        np.testing.assert_allclose(selected.body_q.numpy(), direct.body_q.numpy(), atol=1e-6)
+        np.testing.assert_allclose(selected.body_qd.numpy(), direct.body_qd.numpy(), atol=1e-6)
+        assert np.max(np.abs(selected.body_q.numpy()[:, :3] - initial[:, :3])) > 0.01
+
+
+@pytest.mark.parametrize(
+    "attributes,columns",
+    [
+        (("jointPositionTarget",), ("drive:angular:physics:targetPosition",)),
+        (("body_qd",), ("physics:velocity", "physics:angularVelocity")),
+        (
+            ("jointVelocity", "jointPositionTarget"),
+            ("state:angular:physics:velocity", "drive:angular:physics:targetPosition"),
+        ),
+    ],
+)
+def test_selective_fields_retain_read_plan_and_buffers(ingress_device, attributes, columns):
+    with ovstage.Stage("selective-read-plan") as stage:
+        _populate(stage, DRIVEN_REVOLUTE)
+        binding = ovnewton.attach_ovstage(stage)
+        state, control = binding.model.state(), binding.model.control()
+        binding.update_from_ovstage(state, control, attributes=attributes)
+        runtime = binding._runtime
+        key = tuple(name for name in runtime.read_fields if name in attributes)
+        plan = runtime.read_plans[key]
+        assert tuple(binding._pd.token_to_string(token) for token in plan.tokens) == columns
+
+        def storage_pointers():
+            return (
+                *(runtime.read_fields[name].staging.ptr for name in plan.fields),
+                *(layout.staging.ptr for column in plan.columns for layout in column.slices),
+            )
+
+        pointers = storage_pointers()
+        for _ in range(2):
+            binding.update_from_ovstage(state, control, attributes=attributes)
+            assert runtime.read_plans[key] is plan
+            assert storage_pointers() == pointers
+
+
+@pytest.mark.parametrize("attributes", [None, ("jointPositionTarget",)])
+def test_runtime_ingress_path_selection_lifetime(ingress_device, attributes):
+    with ovstage.Stage("reusable-ingress-selection") as stage:
+        _populate(stage, DRIVEN_REVOLUTE)
+        binding = ovnewton.attach_ovstage(stage)
+        state, control = binding.model.state(), binding.model.control()
+        path_dictionary = binding._pd
+        path_list = int(binding._runtime.read_path_list)
+        paths = list(binding._runtime.paths)
+        for _ in range(2):
+            binding.update_from_ovstage(state, control, attributes=attributes)
+            assert binding._runtime.read_path_list == path_list
+            assert path_dictionary.get_path_strings(path_list) == paths
+
+        binding_ref = weakref.ref(binding)
+        del binding
+        gc.collect()
+        assert binding_ref() is None
+        # The stage/dictionary remain usable, but the binding's native list is gone.
+        with pytest.raises(ovstage.OvxError):
+            path_dictionary.path_list_count(path_list)

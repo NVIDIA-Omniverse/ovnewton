@@ -15,6 +15,8 @@ Attachment
 
 .. autofunction:: ovnewton.register_usd_schemas
 
+.. autofunction:: ovnewton.population_desc
+
 .. autofunction:: ovnewton.add_ovstage
 
 .. autoclass:: ovnewton.OvstageImportResult

@@ -36,6 +36,10 @@ header:
     - "LICENSE.md"
     - "uv.lock"
     - ".python-version"
+    # Skill documentation is covered by LICENSE.md. Keep YAML frontmatter first;
+    # generated cards and benchmarks must not be edited after signing.
+    - "skills/using-ovnewton/**/*.md"
+    - "skills/physical-ai-physics-selection/**/*.md"
 
   # Allow room for one copyright notice before NVIDIA. The 120-character
   # limit matches Ruff's project line limit. If an asset needs several earlier
