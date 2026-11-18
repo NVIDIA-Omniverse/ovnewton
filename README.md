@@ -57,6 +57,11 @@ pip install "ovnewton[examples]"
 python -m ovnewton.examples.example_ovnewton_basic
 ```
 
+In the live viewer, left-drag to look around and use WASD to move the camera.
+Right-drag a rigid body or robot link to pull it with a spring force; release the
+button to let go. Picking uses Newton’s public `Picking` helper and also works
+with CUDA graphs. Cloth particles are not pickable.
+
 The same example can build the scene through ovnewton and advance it with the
 MuJoCo-Warp or VBD backend on CUDA or CPU:
 
@@ -140,7 +145,7 @@ See the [getting-started guide](https://github.com/NVIDIA-Omniverse/ovnewton/blo
 
 `ovnewton` supports rigid bodies, articulations, primitive and mesh colliders, physics materials, collision filtering, and a limited subset of surface-cloth inputs. Applications can synchronize state with ovstage and read selected Newton outputs on CPU or CUDA.
 
-Physics instancing, Newton actuators, cables and volume deformables are not supported. Joint-state updates, material bindings and cloth inputs have additional restrictions; see the [support guide](https://github.com/NVIDIA-Omniverse/ovnewton/blob/main/docs/site/support.md) for the full list.
+Physics instancing and Newton actuators are not supported. Canonical cables and tetrahedral volumes have limited support; see the [deformable guide](https://github.com/NVIDIA-Omniverse/ovnewton/blob/main/docs/site/deformables.md) for the supported inputs and a runnable example. Joint-state updates, material bindings and cloth inputs have additional restrictions; see the [support guide](https://github.com/NVIDIA-Omniverse/ovnewton/blob/main/docs/site/support.md) for the full list.
 
 Malformed data and unsupported physics that would materially change the model raise an error. Recoverable import decisions use the standard `ovnewton` Python logger; see the [concepts guide](https://github.com/NVIDIA-Omniverse/ovnewton/blob/main/docs/site/concepts.md#diagnostics-and-observability) for details.
 

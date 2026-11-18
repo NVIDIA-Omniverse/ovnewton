@@ -26,7 +26,7 @@ import newton
 import numpy as np
 import warp as wp
 
-from . import _mjc, _parse, _stage
+from . import _curves, _deformables, _mjc, _parse, _stage, _surfaces, _volumes
 from ._errors import InvalidPhysicsError, OvstageContractError, UnsupportedPhysicsError, log_diagnostic
 from ._parse import _DofDesc, _JointDesc
 from ._schema_names import (
@@ -468,7 +468,7 @@ def _mesh_geometry(collider: Dict[str, Any]) -> newton.Mesh:
     path = collider.get("path", "<unknown collider>")
     if points is None or counts is None or indices is None:
         raise InvalidPhysicsError(f"mesh collider {path} is missing points or face topology")
-    points = np.asarray(points, dtype=np.float64).reshape(-1)
+    points = np.asarray(points).reshape(-1)
     indices = np.asarray(indices, dtype=np.int32).reshape(-1)
     if points.size < 9 or points.size % 3:
         raise InvalidPhysicsError(f"mesh collider {path} has an invalid point array")
@@ -632,6 +632,7 @@ class _ResolvedJoint:
     child: int
     parent_xform: Any
     child_xform: Any
+    endpoints_swapped: bool
 
 
 @dataclass(frozen=True)
@@ -698,7 +699,8 @@ def _joint_records(
         pos1 = np.array(d.local_pos1) * bodies.scale.get(d.body1, ones)
         rot0 = np.asarray(d.local_rot0, dtype=float)
         rot1 = np.asarray(d.local_rot1, dtype=float)
-        if child == -1 and parent != -1:
+        endpoints_swapped = child == -1
+        if endpoints_swapped:
             parent, child = -1, parent
             pos0, pos1 = pos1, pos0
             rot0, rot1 = rot1, rot0
@@ -710,7 +712,7 @@ def _joint_records(
             if body_t is None or body_q is None:
                 raise OvstageContractError(f"jointed rigid body has no world transform: {body_path}")
             pxf = wp.transform_multiply(_wp_xform(body_t, body_q), cxf)
-        joint = _ResolvedJoint(jpath, d, parent, child, pxf, cxf)
+        joint = _ResolvedJoint(jpath, d, parent, child, pxf, cxf, endpoints_swapped)
         records.append(_JointBuildRecord((joint,), parent, child))
     return records
 
@@ -801,8 +803,8 @@ def _dof_kw(
         if value is not None:
             kw[name] = value * angular_gain
     for name, value in (
-        ("target_pos", d.drive_target),
-        ("target_vel", d.drive_velocity),
+        ("target_q", d.drive_target),
+        ("target_qd", d.drive_velocity),
         ("velocity_limit", d.velocity_limit),
     ):
         if value is not None:
@@ -820,6 +822,13 @@ def _dof_kw(
             d.drive_stiffness or 0.0, d.drive_damping or 0.0, has_drive=True
         )
     if mjc is not None:
+        lower, upper = mjc.get("mjc:actuatorfrcrange:min"), mjc.get("mjc:actuatorfrcrange:max")
+        if lower is not None or upper is not None:
+            lower, upper = lower or 0.0, upper or 0.0
+            limited = mjc.get("mjc:actuatorfrclimited", "auto")
+            if limited == "true" or (limited == "auto" and lower < upper):
+                # Newton uses a symmetric clamp; preserve the tighter drive/joint limit.
+                kw["effort_limit"] = min(kw.get("effort_limit", float("inf")), max(abs(lower), abs(upper)))
         for name, attribute in _MJC_JOINT_DYNAMICS.items():
             if getattr(d, name) is None and attribute in mjc:
                 # MuJoCo angular damping is already per radian.
@@ -841,8 +850,8 @@ def _joint_dof_config(builder: Any, axis: Any, overrides: Dict[str, Any]) -> Any
             "limit_upper",
             "limit_ke",
             "limit_kd",
-            "target_pos",
-            "target_vel",
+            "target_q",
+            "target_qd",
             "target_ke",
             "target_kd",
             "damping",
@@ -888,22 +897,14 @@ def _mjc_joint_attributes(builder: Any, source: _ResolvedJoint) -> Dict[str, Any
         kw = _dof_kw(dof, dof.rotational, dof.limit_lower, dof.limit_upper, desc.mjc_properties)
         mode = (
             _MJC_SOLREF_FORCE_SPACE
-            if custom_limits or "limit_ke" in kw or "limit_kd" in kw
+            if (
+                custom_limits
+                or dof.broadcast_limit_stiffness is not None or dof.broadcast_limit_damping is not None
+            )
             else _MJC_SOLREF_DEFAULT
         )
         if "mjc:solreflimit" in desc.mjc_properties:
             mode = _MJC_SOLREF_RAW
-        elif (
-            mode == _MJC_SOLREF_DEFAULT
-            and "mujoco:solreflimit_mode" in builder.custom_attributes
-            and (dof.broadcast_limit_stiffness is not None or dof.broadcast_limit_damping is not None)
-        ):
-            # An authored -inf means force-space engine defaults; an identical
-            # schema fallback permits MJCF defaults. Population loses that distinction.
-            raise UnsupportedPhysicsError(
-                f"ambiguous Newton limit defaults at {source.path}; "
-                "author finite Newton limit gains or mjc:solreflimit, or use a single joint parameter namespace"
-            )
         for name, value in (
             ("solreflimit_mode", mode),
             (
@@ -917,6 +918,25 @@ def _mjc_joint_attributes(builder: Any, source: _ResolvedJoint) -> Dict[str, Any
     return attributes
 
 
+def _reverse_joint_axes(linear: Sequence[Any], angular: Sequence[Any], swapped: Sequence[Any], path: str) -> None:
+    """Reverse commuting DOFs, keeping their authored coordinates and limits."""
+    if not swapped:
+        return
+    if angular and (len(angular) != 1 or any(
+        np.linalg.norm(np.cross(axis.axis, angular[0].axis)) >= 1e-6 for axis in linear
+    )):
+        log_diagnostic(
+            "joint-reversal-unsupported",
+            "Newton cannot reverse this multi-axis joint exactly; keeping authored axes. "
+            "Limits, drives and initial state may act in the mirrored direction. "
+            "Author the rigid body as physics:body1 to avoid this limitation.",
+            path=path,
+        )
+        return
+    for axis in swapped:
+        axis.axis = -axis.axis
+
+
 def _add_merged_d6(builder: Any, record: _JointBuildRecord) -> int:
     """Merge same-body-pair axes into the first joint's D6 frame."""
     group = record.sources
@@ -927,6 +947,7 @@ def _add_merged_d6(builder: Any, record: _JointBuildRecord) -> int:
     angular: List[Any] = []
     linear_records: List[_ResolvedJoint] = []
     angular_records: List[_ResolvedJoint] = []
+    swapped = []
     for r in group:
         d = r.desc
         dof = d.dofs[0]
@@ -942,12 +963,15 @@ def _add_merged_d6(builder: Any, record: _JointBuildRecord) -> int:
         hi = None if dof.limit_upper == float("inf") else dof.limit_upper
         if d.prim_type == "PhysicsRevoluteJoint":
             kw: Dict[str, Any] = _dof_kw(dof, True, lo, hi, d.mjc_properties)
-            angular.append(_joint_dof_config(builder, axis, kw))
             angular_records.append(r)
         else:  # PhysicsPrismaticJoint — linear DOF, no unit conversion
             kw = _dof_kw(dof, False, lo, hi, d.mjc_properties)
-            linear.append(_joint_dof_config(builder, axis, kw))
             linear_records.append(r)
+        config = _joint_dof_config(builder, axis, kw)
+        (angular if dof.rotational else linear).append(config)
+        if r.endpoints_swapped:
+            swapped.append(config)
+    _reverse_joint_axes(linear, angular, swapped, rep.path)
     attributes = {}
     for index, source in enumerate(linear_records + angular_records):
         for key, value in _mjc_joint_attributes(builder, source).items():
@@ -989,7 +1013,7 @@ def _add_joint(builder: Any, record: _JointBuildRecord) -> int:
             child=record.child,
             parent_xform=source.parent_xform,
             child_xform=source.child_xform,
-            axis=dof.axis,
+            axis=tuple(-value for value in dof.axis) if source.endpoints_swapped else dof.axis,
             collision_filter_parent=collision_filter_parent,
             **rkw,
             custom_attributes=attributes,
@@ -1004,7 +1028,7 @@ def _add_joint(builder: Any, record: _JointBuildRecord) -> int:
             child=record.child,
             parent_xform=source.parent_xform,
             child_xform=source.child_xform,
-            axis=dof.axis,
+            axis=tuple(-value for value in dof.axis) if source.endpoints_swapped else dof.axis,
             collision_filter_parent=collision_filter_parent,
             **pkw,
             custom_attributes=attributes,
@@ -1042,13 +1066,18 @@ def _add_joint(builder: Any, record: _JointBuildRecord) -> int:
             kw = _dof_kw(dof, dof.rotational, dof.limit_lower, dof.limit_upper, d.mjc_properties)
             config = _joint_dof_config(builder, dof.axis, kw)
             (angular if dof.rotational else linear).append((config, dof))
+        linear_axes = [config for config, _ in linear]
+        angular_axes = [config for config, _ in angular]
+        _reverse_joint_axes(
+            linear_axes, angular_axes, linear_axes + angular_axes if source.endpoints_swapped else (), source.path
+        )
         joint = builder.add_joint_d6(
             parent=record.parent,
             child=record.child,
             parent_xform=source.parent_xform,
             child_xform=source.child_xform,
-            linear_axes=[config for config, _ in linear] or None,
-            angular_axes=[config for config, _ in angular] or None,
+            linear_axes=linear_axes or None,
+            angular_axes=angular_axes or None,
             collision_filter_parent=collision_filter_parent,
             custom_attributes=attributes,
         )
@@ -1432,13 +1461,12 @@ def _apply_collision_groups(
     builder: Any,
     groups: List[Dict[str, Any]],
     shape_by_path: Dict[str, int],
-    hierarchy: _parse._Hierarchy,
 ) -> None:
     """Lower USD group rules to pairs without changing Newton's numeric groups.
 
     USD groups collide by default, unlike distinct positive Newton group IDs.
-    Named merges share rules; any membership may veto a collision. Collection
-    membership still supports only direct and subtree includes/excludes (OV-7).
+    Named merges share rules; any membership may veto a collision. OVStage
+    resolves collection membership during population.
     """
     if not groups:
         return
@@ -1465,9 +1493,6 @@ def _apply_collision_groups(
     if not any(blocked.values()):
         return
 
-    def in_collection(path: str, roots: List[str]) -> bool:
-        return any(hierarchy.contains(root, path) for root in roots)
-
     # Resolve rules per membership combination, expanding to shape pairs only
     # when blocked. This avoids a shape-by-shape pass over allowed collisions.
     classes: Dict[Tuple[int, ...], List[int]] = {}
@@ -1477,7 +1502,7 @@ def _apply_collision_groups(
         membership = tuple(sorted({
             group_ids[group["path"]]
             for group in groups
-            if in_collection(path, group["includes"]) and not in_collection(path, group["excludes"])
+            if path in group["members"]
         })) or (-1,)
         classes.setdefault(membership, []).append(shape)
 
@@ -1687,6 +1712,7 @@ def add_ovstage(builder: Any, stage: Any, pd: Any, ordinal: int = 1) -> bool:
             **_analytic_geometry_kwargs(site),
         )
 
+    deformable_values = _deformables.read_deformables(stage, pd, ordinal)
     remeshing: Dict[str, List[int]] = {}
     shape_by_path: Dict[str, int] = {}
     disabled_shapes: List[int] = []
@@ -1695,6 +1721,8 @@ def add_ovstage(builder: Any, stage: Any, pd: Any, ordinal: int = 1) -> bool:
         pd,
         ordinal,
         newton_mass_api=newton_mass_api,
+        # Simulation geometry gets its collision representation from the deformable builder.
+        excluded_paths={value.geometry_path for value in deformable_values},
     )
     _validate_transform_hierarchies(
         stage,
@@ -1813,7 +1841,7 @@ def add_ovstage(builder: Any, stage: Any, pd: Any, ordinal: int = 1) -> bool:
             disabled_shapes.append(shape)
 
     # Newton propagates existing filters to additional convex parts during remeshing.
-    _apply_collision_groups(builder, _parse.read_collision_groups(stage, pd, ordinal), shape_by_path, hierarchy)
+    _apply_collision_groups(builder, _parse.read_collision_groups(stage, pd, ordinal), shape_by_path)
 
     for method, shapes in remeshing.items():
         builder.approximate_meshes(method=method, shape_indices=shapes)
@@ -1856,21 +1884,42 @@ def add_ovstage(builder: Any, stage: Any, pd: Any, ordinal: int = 1) -> bool:
         hierarchy,
         articulation_self_collisions=_parse.read_articulation_self_collisions(stage, pd, ordinal),
     )
+    from . import _mjc_actuators  # noqa: PLC0415
+
+    _mjc_actuators.build_actuators(builder, stage, pd, ordinal, joint_by_path, hierarchy)
     _build_mimics(builder, _parse.read_mimics(stage, pd, ordinal), joint_by_path)
     _mjc.build_joint_equalities(builder, joint_equalities, joint_by_path)
     has_orphan_joints = _mjc.build_equalities(builder, equalities, bodies.index, bodies.scale) or has_orphan_joints
+    build_deformables(builder, deformable_values)
     _initialize_free_joint_velocities(builder)
-    from . import _deformables  # noqa: PLC0415
-
-    deformable_values = _deformables.read_deformables(stage, pd, ordinal)
-    _deformables.build_deformables(builder, deformable_values)
     return has_orphan_joints
+
+
+def build_deformables(builder: Any, values: Sequence[_deformables.DeformableInput]) -> None:
+    """Prepare every family before appending any deformable geometry."""
+    families = {
+        _deformables.DeformableFamily.CURVES: (
+            _curves.prepare_curves, _curves.build_curves, builder.default_shape_cfg.density
+        ),
+        _deformables.DeformableFamily.SURFACE: (
+            _surfaces.prepare_surface, _surfaces.build_surface, builder.default_shape_cfg.density
+        ),
+        _deformables.DeformableFamily.VOLUME: (
+            _volumes.prepare_volume, _volumes.build_volume, builder.default_tet_density
+        ),
+    }
+    prepared = []
+    for value in values:
+        prepare, build, density = families[value.family]
+        prepared.append((build, value, prepare(value, density)))
+    for build, value, data in prepared:
+        build(builder, value, data)
 
 
 def build_model(stage: Any, pd: Any, ordinal: int = 1):
     """Build and finalize a ``newton.Model`` from a populated ovstage."""
     builder = newton.ModelBuilder()
     has_orphan_joints = add_ovstage(builder, stage, pd, ordinal=ordinal)
-    if builder.particle_count:
+    if builder.particle_count or builder.curve_label:
         builder.color(include_bending=True)
     return builder.finalize(skip_validation_joints=has_orphan_joints)

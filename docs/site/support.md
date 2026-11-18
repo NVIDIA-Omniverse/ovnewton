@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 
 ## Requirements
 
-The supported Python range is 3.11 through 3.14. The NumPy and SciPy floors are 1.26.0 and 1.11.2 on Python 3.11 and 3.12, 2.1.0 and 1.14.1 on Python 3.13, and NumPy 2.3.2 and SciPy 1.16.1 on Python 3.14. The fast-simplification floor is 0.1.13. Ovstage is pinned to the qualified public build `0.3.0.1791986420`; optional examples require OVRTX `>=0.6.0.1791947691,<0.7`. The remaining dependency floors are Newton 1.7.0 and Warp 1.17.0. CI tests these versions with the built ovnewton wheel on Linux x86-64. Dependencies install from public package sources.
+The supported Python range is 3.11 through 3.14. The NumPy and SciPy floors are 1.26.0 and 1.11.2 on Python 3.11 and 3.12, 2.1.0 and 1.14.1 on Python 3.13, and NumPy 2.3.2 and SciPy 1.16.1 on Python 3.14. The fast-simplification floor is 0.1.13. Ovstage is pinned to the exact qualified build declared in `pyproject.toml`. Newton 1.8.0 or newer is required and installs from PyPI; the wheel metadata records the supported range. Newton USD schemas 0.5 and 0.6 are supported. The Warp floor remains 1.17. Release validation checks the declared dependency floors using the built ovnewton wheel on Linux x86-64 and aarch64.
 
 Supported non-rendering workflows can run entirely on the CPU. OVRTX rendering requires a compatible NVIDIA RTX-capable GPU and supported driver, even when physics runs on the CPU.
 
@@ -16,13 +16,14 @@ Supported non-rendering workflows can run entirely on the CPU. OVRTX rendering r
 `ovnewton` supports:
 
 - rigid bodies and articulations
-- a limited subset of canonical surface-cloth inputs
+- limited canonical cable, cloth, and tetrahedral volume inputs; see [deformable loading](deformables.md)
 - sphere, cube, capsule, cylinder, cone, and mesh colliders
 - mass, inertia, center of mass, physics materials, and collision filtering
 - revolute, prismatic, fixed, spherical, distance, and D6 joints
 - MuJoCo Connect/Weld body equalities with explicit {ref}`population selection <mujoco-body-equalities>`
 - MuJoCo scalar joint equalities, including polynomial coefficients and disabled constraints
 - `MjcJointAPI` parameters on revolute, prismatic, and D6 joints, including merged scalar axes
+- Scalar MuJoCo position/velocity actuators with control and force limits (registered MuJoCo profile)
 - initial body and joint state
 - body state and single-axis joint state updates
 - selected read-only Newton output on CPU and CUDA
@@ -40,8 +41,8 @@ updates, matching Newton's `add_usd()` importer. Linear joint state is unchanged
 - `MjcJointAPI` is limited to revolute, prismatic, and D6 joints. Native D6 reference coordinates are rejected. MuJoCo-specific solver parameters require attribute registration before import; see {ref}`MuJoCo joint parameters <mujoco-joint-parameters>`.
 - Physics `PointInstancer` content is rejected.
 - Per-axis runtime state for D6 joints is not synchronized.
+- Newton limitation: reversed multi-axis joints can preserve direction exactly only for translations, or one rotation with translations parallel to its axis. Other reversed combinations emit a warning and retain their authored axes. Author the rigid body as `physics:body1` against world to avoid this limitation.
 - Newton limitation: its mimic APIs operate on whole joints and cannot target individual source axes after D6 merging. ovnewton rejects enabled mimics involving such merges with `UnsupportedPhysicsError` to preserve authored physics. This is intentionally stricter than Newton's USD importer, which can warn and continue when joint dimensions match.
 - Inherited and collection-based material bindings have partial support.
-- Surface cloth supports enabled, non-kinematic bodies with identity world transforms, constant thickness, and density-derived mass. Material inputs are limited to density, stretch stiffness, and bend stiffness.
-- Newton actuators, cables, and volume deformables are not supported.
+- Cables, cloth, and volumes support only the documented canonical subset. Surface cloth supports enabled, non-kinematic bodies with fixed rigid world transforms, constant thickness, and density-derived mass; its material inputs are limited to density, stretch stiffness, and bend stiffness. Attachments, separate render skins, and broader deformable parity remain unsupported.
 - Some recoverable inputs are ignored or normalized with a warning.

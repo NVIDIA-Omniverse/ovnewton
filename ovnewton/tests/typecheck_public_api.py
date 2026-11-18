@@ -10,10 +10,16 @@ import newton
 import numpy as np
 import numpy.typing as npt
 import ovstage
+import warp as wp
 
 import ovnewton
 
 assert_type(ovnewton.population_desc(), ovstage.population.Desc)
+
+read_field = assert_type(ovnewton.read_fields()["body_q"], ovnewton.ReadField)
+assert_type(read_field.lanes, int | None)
+assert_type(read_field.sources, tuple[str, ...])
+assert_type(read_field.conversion, str | None)
 
 
 def check_public_interface(
@@ -22,6 +28,7 @@ def check_public_interface(
     model: newton.Model,
     state: newton.State,
     control: newton.Control,
+    targets: wp.array[wp.float32],
 ) -> None:
     builder = newton.ModelBuilder()
     import_result = assert_type(ovnewton.add_ovstage(builder, stage), ovnewton.OvstageImportResult)
@@ -39,12 +46,19 @@ def check_public_interface(
         ),
         ovnewton.Query,
     )
-    assert_type(query.attributes, tuple[int, ...])
+    assert_type(query.attributes, tuple[ovstage.Token, ...])
     assert_type(query.prim_count, int)
     assert_type(typed_query.object_type, ovnewton.SimObjectType | None)
     assert_type(typed_query.scope, ovnewton.ObjectScope)
 
+    assert_type(binding.write({"joint_target_q": targets}, control=control, query=query), None)
+    assert_type(binding.write({"joint_target_qd": targets}, control=control, query=query), None)
     result = assert_type(binding.read(state, query=query, attributes=["body_q"]), ovnewton.ReadResult)
+    assert_type(binding.read(state, query=query, attributes=query.attributes), ovnewton.ReadResult)
+    assert_type(
+        binding.read(control=control, query=query, attributes=["joint_f"]),
+        ovnewton.ReadResult,
+    )
     assert_type(
         binding.read(
             state,
@@ -56,17 +70,25 @@ def check_public_interface(
     )
     assert_type(result.groups, tuple[ovnewton.ReadGroup, ...])
     group = result.groups[0]
-    assert_type(group.tensor(0), ovstage.DLTensor)
+    assert_type(group.prim_list, ovstage.PrimPathList)
+    assert_type(group.prim_count, int)
+    assert_type(group.prim_index(0), int)
     assert_type(group.object_type, ovnewton.SimObjectType | None)
-    assert_type(group.array(0), npt.NDArray[np.generic])
-    assert_type(group.dlpack(0), ovstage.ManagedDLTensor)
-    assert_type(group.data_index_tensor(), ovstage.DLTensor | None)
-    assert_type(group.data_index_array(), npt.NDArray[np.generic] | None)
-    assert_type(group.data_index_dlpack(), ovstage.ManagedDLTensor | None)
-    assert_type(group.meta, ovnewton.ReadGroupMeta)
-    assert_type(group.meta.attribute_write_floor_ordinal, int)
-    assert_type(group.cuda_sync, ovnewton.ReadGroupCudaSync)
-    assert_type(group.cuda_sync.wait_event, int)
+    assert_type(group.columns, tuple[ovnewton.ReadColumn, ...])
+    assert_type(group.column_count, int)
+    column = group.columns[0]
+    assert_type(column.attribute, ovstage.Token)
+    assert_type(column.tensor(0), ovstage.DLTensor)
+    assert_type(column.data_row_index(0), int)
+    assert_type(column.array(0), npt.NDArray[np.generic])
+    assert_type(column.dlpack(0), ovstage.ManagedDLTensor)
+    assert_type(column.data_index_tensor(), ovstage.DLTensor | None)
+    assert_type(column.data_index_array(), npt.NDArray[np.generic] | None)
+    assert_type(column.data_index_dlpack(), ovstage.ManagedDLTensor | None)
+    assert_type(column.meta, ovnewton.ReadColumnMeta)
+    assert_type(column.meta.attribute_write_floor_ordinal, int)
+    assert_type(column.cuda_sync, ovnewton.ReadColumnCudaSync)
+    assert_type(column.cuda_sync.wait_event, int)
 
     assert_type(binding.update_to_ovstage(state, ordinal=2), None)
     assert_type(binding.update_from_ovstage(state, control, ordinal=2), None)

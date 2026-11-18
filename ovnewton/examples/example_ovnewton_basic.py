@@ -69,11 +69,14 @@ def _solver_spec(newton, solver_name):
 class Example:
     """An ovstage scene simulated by Newton and optionally rendered by ovrtx."""
 
+    # Subclasses with their own initialization use the direct loop until captured.
+    graph = None
+    sim_substeps = 2
+
     def __init__(self, args):
         self.args = args
         solver_name = getattr(args, "solver", "xpbd")
         self.frame_dt = 1.0 / 60.0
-        self.sim_substeps = 2
         self.sim_dt = self.frame_dt / self.sim_substeps
         self.ordinal = 1
         self.next_timing_time = time.time()
@@ -123,7 +126,17 @@ class Example:
                 self.renderer = self._create_renderer()
                 population.open_usd_with_desc(
                     self.stage, scene, ordinal=1, time=population.DEFAULT_TIME,
-                    descs=(population.Desc(domains=PopulationDomain.RENDERING), ovnewton.population_desc()),
+                    descs=(
+                        population.Desc(
+                            domains=PopulationDomain.RENDERING,
+                            # The rendering domain omits the TetMesh boundary faces required by OVRTX.
+                            selectors=(population.Selector(
+                                prim_predicate=population.PrimPredicate.has_type("TetMesh"),
+                                property_predicate=population.PropertyPredicate.has_name("surfaceFaceVertexIndices"),
+                            ),),
+                        ),
+                        ovnewton.population_desc(),
+                    ),
                 )
                 if apply_vbd_material_override:
                     # Temporary VBD-only USD tuning until these values can be
@@ -145,26 +158,13 @@ class Example:
 
             # ── 3. Build a Newton model from ovstage ───────────────────
             import newton
+            from newton.viewer import Picking
 
-            solver_spec = _solver_spec(newton, solver_name)
-            builder = newton.ModelBuilder()
-            solver_spec["register_attributes"](builder)
-
-            with wp.ScopedTimer("ovnewton init", active=args.timing, synchronize=True):
-                import_result = ovnewton.add_ovstage(builder, self.stage, ordinal=self.ordinal)
-                finish_builder = solver_spec["finish_builder"]
-                if finish_builder is not None:
-                    finish_builder(builder)
-                self.model = builder.finalize(skip_validation_joints=import_result.has_orphan_joints)
-            if self.model.body_count == 0:
-                raise RuntimeError("No rigid bodies were found in the scene")
-
-            # The application owns the solver, state, control, and step loop.
-            self.solver = solver_spec["create_solver"](self.model)
+            self.model, self.solver = self._create_simulation()
             self.binding = ovnewton.attach_ovstage(self.stage, model=self.model, ordinal=self.ordinal)
             self.collision_pipeline = newton.CollisionPipeline(self.model)
             self.contacts = self.collision_pipeline.contacts()
-            print(f"newton: using {solver_name} solver")
+            print(f"newton: using {type(self.solver).__name__.removeprefix('Solver').lower()} solver")
             self.state_0 = self.model.state()
             self.state_1 = self.model.state()
             self.control = self.model.control()
@@ -172,6 +172,11 @@ class Example:
             # Needed by maximal-coordinate solvers; harmless for MuJoCo.
             newton.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, self.state_0)
             self.initial_body_q = self.state_0.body_q.numpy().copy()
+            if self.model.particle_count:
+                self.initial_particle_q = self.state_0.particle_q.numpy().copy()
+            self.picking = Picking(self.model)
+            if self.model.device.is_cuda and getattr(args, "cuda_graph", "true") == "true":
+                self.capture()
 
         except Exception:
             try:
@@ -179,6 +184,24 @@ class Example:
             except Exception:
                 pass
             raise
+
+    def _create_simulation(self):
+        """Build the scene's model and solver before state and viewer setup."""
+        import newton
+
+        import ovnewton
+
+        spec = _solver_spec(newton, getattr(self.args, "solver", "xpbd"))
+        builder = newton.ModelBuilder()
+        spec["register_attributes"](builder)
+        with wp.ScopedTimer("ovnewton init", active=self.args.timing, synchronize=True):
+            result = ovnewton.add_ovstage(builder, self.stage, ordinal=self.ordinal)
+            if spec["finish_builder"] is not None:
+                spec["finish_builder"](builder)
+            model = builder.finalize(skip_validation_joints=result.has_orphan_joints)
+        if model.body_count == 0:
+            raise RuntimeError("No rigid bodies were found in the scene")
+        return model, spec["create_solver"](model)
 
     def step(self, frame):
         """Simulate, publish, and optionally render one frame."""
@@ -189,7 +212,11 @@ class Example:
             print(f"\nFrame {frame}")
 
         # ── 4. Advance the Newton simulation ──────────────────────────
-        self.simulate()
+        with wp.ScopedTimer("step", active=self.frame_timing, synchronize=True):
+            if self.graph is None:
+                self.simulate()
+            else:
+                wp.capture_launch(self.graph)
 
         # ── 5. Publish the Newton state to ovstage ─────────────────────
         self.publish()
@@ -197,14 +224,23 @@ class Example:
         # ── 6. Render the updated ovstage scene with ovrtx ─────────────
         return self.renderer is None or self.render(frame)
 
+    def capture(self):
+        """Record physics only; stage publication and rendering stay outside the graph."""
+        # An even number of substeps returns state_0/state_1 to their original buffers; each
+        # replay starts from the preceding frame and publishes the latest state.
+        with wp.ScopedCapture(device=self.model.device) as capture:
+            self.simulate()
+        self.graph = capture.graph
+
     def simulate(self):
         """Advance Newton by one simulation frame."""
-        with wp.ScopedTimer("step", active=self.frame_timing, synchronize=True):
-            for _ in range(self.sim_substeps):
-                self.state_0.clear_forces()
-                self.collision_pipeline.collide(self.state_0, self.contacts)
-                self.solver.step(self.state_0, self.state_1, self.control, self.contacts, self.sim_dt)
-                self.state_0, self.state_1 = self.state_1, self.state_0
+        for _ in range(self.sim_substeps):
+            self.state_0.clear_forces()
+            # Always capture this call; the device-side pick changes as the mouse moves.
+            self.picking.apply_force(self.state_0)
+            self.collision_pipeline.collide(self.state_0, self.contacts)
+            self.solver.step(self.state_0, self.state_1, self.control, self.contacts, self.sim_dt)
+            self.state_0, self.state_1 = self.state_1, self.state_0
 
     def publish(self):
         """Publish the current Newton state to ovstage."""
@@ -296,8 +332,9 @@ class Example:
                     height=height,
                     stage=self.stage,
                     ordinal=self.ordinal,
+                    picking=self.picking,
                 )
-            return self.viewport.show(pixels)
+            return self.viewport.show(pixels, self.state_0)
 
     def _save_png(self, ldr_color, frame):
         from ovrtx import Device
@@ -339,6 +376,7 @@ class Example:
 
     def close(self):
         """Release resources owned by the example."""
+        self.graph = None
         if self.viewport is not None:
             self.viewport.close()
         if self.renderer is not None:
@@ -358,6 +396,12 @@ class Example:
             choices=("xpbd", "mujoco", "vbd"),
             default="xpbd",
             help="Newton solver used to advance the scene",
+        )
+        parser.add_argument(
+            "--cuda-graph",
+            choices=("true", "false"),
+            default="true",
+            help="Replay physics with a CUDA graph; CPU simulation uses the direct loop",
         )
         parser.add_argument(
             "--render-device",

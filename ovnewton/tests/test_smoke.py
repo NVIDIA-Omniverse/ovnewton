@@ -5,7 +5,7 @@
 
 Proves the installed ovstage package or an explicit source build can
 populate ovnewton's physics inputs end-to-end:
-``ovstage.population.open_usd`` mirrors a USD scene into an ovstage, and the
+``ovstage.population.open_usd_with_desc`` mirrors a USD scene into an ovstage, and the
 v2 query surface sees the expected rigid bodies / colliders / joints. This is the
 package reproducibility check. It does NOT exercise the full reader path — for
 that, see ``test_diff.py`` and ``test_byo.py``.
@@ -17,7 +17,7 @@ Run it:
 from importlib.metadata import version
 
 import ovstage
-from ovstage import Filter, FilterOp, PopulationDomain, Predicate, population
+from ovstage import Filter, FilterOp, Predicate, population
 
 import ovnewton
 from ovnewton.examples import get_asset
@@ -42,7 +42,10 @@ def test_populates_cartpole_physics():
         "ovstage.population bridge unavailable; install a compatible ovstage package"
     )
     with ovstage.Stage("ovnewton-smoke") as stage:
-        population.open_usd(stage, CARTPOLE, ordinal=1, domains=PopulationDomain.ALL)
+        population.open_usd_with_desc(
+            stage, CARTPOLE, ordinal=1, time=population.DEFAULT_TIME,
+            descs=(ovnewton.population_desc(),),
+        )
         stage.advance_write_floor(ordinal=1).wait()
         rigid_bodies = _prim_count(stage, [Predicate("usd-schemas", FilterOp.CONTAINS, ["PhysicsRigidBodyAPI"])])
         colliders = _prim_count(stage, [Predicate("usd-schemas", FilterOp.CONTAINS, ["PhysicsCollisionAPI"])])

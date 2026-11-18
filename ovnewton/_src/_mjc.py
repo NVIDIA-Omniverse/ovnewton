@@ -92,7 +92,7 @@ def _read_body_equalities(stage: Any, pd: Any, ordinal: int, candidates: dict[st
             expected = "PhysicsFixedJoint" if candidates[path] else "PhysicsSphericalJoint"
             if jtype != expected:
                 raise UnsupportedPhysicsError(f"equality at {path} requires {expected}, got {jtype}")
-        joints.extend(_parse._read_joints_of_type(stage, pd, jtype, typed_paths, ordinal, ()))
+        joints.extend(_parse._read_joints_of_type(stage, pd, jtype, typed_paths, ordinal))
     indices = {path: i for i, path in enumerate(paths)}
     equalities = {}
     for path, joint in joints:
@@ -182,7 +182,7 @@ def _read_joint_equalities(stage: Any, pd: Any, ordinal: int, paths: list[str]) 
             raise InvalidPhysicsError(f"joint equality at {path} has no newton:mimicJoint target")
         if len(targets) != 1:
             raise InvalidPhysicsError(f"joint equality at {path} has multiple newton:mimicJoint targets")
-        leader = pd.path_to_string(int(targets[0]))
+        leader = _stage._path_to_string(pd, int(targets[0]))
         if leader == path:
             raise InvalidPhysicsError(f"joint equality at {path} cannot target itself")
         coef0, modern_offset = coefficient(0, 0.0)
@@ -271,22 +271,32 @@ def build_equalities(
         pos0 = wp.vec3(*(np.asarray(joint.local_pos0) * scales.get(joint.body0, np.ones(3))))
         pos1 = wp.vec3(*(np.asarray(joint.local_pos1) * scales.get(joint.body1, np.ones(3))))
         anchor = pos1 if equality.weld else pos0
-        rotation = wp.quat(*joint.local_rot0) * wp.quat_inverse(wp.quat(*joint.local_rot1))
-        relative_pose = wp.transform(pos0 - wp.quat_rotate(rotation, pos1), rotation)
         parent, child = (body0, body1) if body1 >= 0 else (-1, body0)
-        world_anchor = wp.transform_point(builder.body_q[body0], anchor) if body0 >= 0 else anchor
-        parent_anchor = (
-            wp.transform_point(wp.transform_inverse(builder.body_q[parent]), world_anchor)
-            if parent >= 0
-            else world_anchor
-        )
-        child_anchor = wp.transform_point(wp.transform_inverse(builder.body_q[child]), world_anchor)
-        add_joint = builder.add_joint_fixed if equality.weld else builder.add_joint_ball
+        relative_pose = wp.transform_identity()
+        if equality.weld:
+            rotation = wp.quat(*joint.local_rot0) * wp.quat_inverse(wp.quat(*joint.local_rot1))
+            # Newton rc2 holds body1's anchor at pos0 in body0's frame. The
+            # relative pose describes that anchor, not body1's origin.
+            relative_pose = wp.transform(pos0, rotation)
+            parent_xform, child_xform = relative_pose, wp.transform(pos1, wp.quat_identity())
+            if body1 < 0:
+                parent_xform, child_xform = child_xform, parent_xform
+        else:
+            world_anchor = wp.transform_point(builder.body_q[body0], anchor) if body0 >= 0 else anchor
+            parent_anchor = (
+                wp.transform_point(wp.transform_inverse(builder.body_q[parent]), world_anchor)
+                if parent >= 0
+                else world_anchor
+            )
+            child_anchor = wp.transform_point(wp.transform_inverse(builder.body_q[child]), world_anchor)
+            parent_xform = wp.transform(parent_anchor, wp.quat_identity())
+            child_xform = wp.transform(child_anchor, wp.quat_identity())
+        add_joint = builder.add_joint_fixed if equality.weld and equality.torque_scale != 0 else builder.add_joint_ball
         target = add_joint(
             parent=parent,
             child=child,
-            parent_xform=wp.transform(parent_anchor, wp.quat_identity()),
-            child_xform=wp.transform(child_anchor, wp.quat_identity()),
+            parent_xform=parent_xform,
+            child_xform=child_xform,
             label=path,
         )
         # The public custom-value contract links this row to its projected joint,
@@ -298,7 +308,7 @@ def build_equalities(
                 "mujoco:equality_constraint_body1": body0,
                 "mujoco:equality_constraint_body2": body1,
                 "mujoco:equality_constraint_anchor": anchor,
-                "mujoco:equality_constraint_relpose": relative_pose if equality.weld else wp.transform_identity(),
+                "mujoco:equality_constraint_relpose": relative_pose,
                 "mujoco:equality_constraint_torquescale": equality.torque_scale if equality.weld else 0.0,
                 "mujoco:equality_constraint_label": path,
                 "mujoco:equality_constraint_enabled": True,

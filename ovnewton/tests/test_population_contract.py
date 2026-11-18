@@ -8,20 +8,21 @@ import ovstage
 import pytest
 from ovstage import PopulationDomain, population
 
+import ovnewton
+from ovnewton._src import _stage
 from ovnewton._src._parse import _api_paths, _type_paths
 from ovnewton._src._stage import _path_list_query, read_columns
 
 
 @contextmanager
-def _populated_stage(usda, name, domains):
+def _populated_stage(usda, name, domains=PopulationDomain.NONE):
     with ovstage.Stage(name) as stage, ovstage.PathDictionary(stage) as pd:
-        population.open_usd_from_string(stage, usda, ordinal=1, domains=domains)
+        population.open_usd_from_string_with_desc(
+            stage, usda, ordinal=1, time=population.DEFAULT_TIME,
+            descs=(population.Desc(domains=domains), ovnewton.population_desc()),
+        )
         stage.advance_write_floor(ordinal=1).wait()
         yield stage, pd
-
-
-def _physics_stage(usda, name):
-    return _populated_stage(usda, name, PopulationDomain.PHYSICS)
 
 
 def _require_columns(columns, attributes, *, index=0, reason):
@@ -30,7 +31,8 @@ def _require_columns(columns, attributes, *, index=0, reason):
         pytest.xfail(f"{reason}: {', '.join(missing)}")
 
 
-def test_newton_joint_api_04_is_mirrored():
+@pytest.mark.parametrize("domains", [PopulationDomain.NONE, PopulationDomain.RENDERING])
+def test_newton_joint_api_preserves_missing_overrides(domains):
     usda = '''#usda 1.0
 def Xform "Body" (prepend apiSchemas = ["PhysicsRigidBodyAPI"]) {}
 def PhysicsRevoluteJoint "Defaults" (prepend apiSchemas = ["NewtonJointAPI"]) {
@@ -54,26 +56,18 @@ def PhysicsRevoluteJoint "Authored" (prepend apiSchemas = ["NewtonJointAPI"]) {
         "newton:limitStiffness",
         "newton:limitDamping",
     )
-    with _physics_stage(usda, "newton-joint-api-contract") as (stage, pd):
+    with _populated_stage(usda, "newton-joint-api-contract", domains) as (stage, pd):
         paths = ["/Defaults", "/Authored"]
-        if not set(paths).issubset(_api_paths(stage, pd, 1, "NewtonJointAPI")):
-            pytest.xfail("ovpopulation does not register NewtonJointAPI 0.4.0")
+        assert set(paths).issubset(_api_paths(stage, pd, 1, "NewtonJointAPI"))
         with _path_list_query(stage, pd, paths) as query:
             columns = read_columns(stage, pd, query, attributes, 1)
-        for index in range(2):
-            _require_columns(
-                columns,
-                attributes,
-                index=index,
-                reason="ovpopulation does not mirror NewtonJointAPI values",
-            )
 
-    defaults = [float(columns[attribute][0][0]) for attribute in attributes]
-    authored = [float(columns[attribute][1][0]) for attribute in attributes]
-    assert defaults[:3] == [0.0, 0.0, 0.0]
-    assert np.isposinf(defaults[3])
-    assert np.isneginf(defaults[4:]).all()
-    assert authored == [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+    for attribute in attributes:
+        if attribute == "newton:velocityLimit":
+            assert np.isposinf(columns[attribute][0][0])
+        else:
+            assert 0 not in columns[attribute]
+    assert [float(columns[attribute][1][0]) for attribute in attributes] == [1, 2, 3, 4, 5, 6]
 
 
 def test_mesh_orientation_is_mirrored_under_physics():
@@ -86,13 +80,13 @@ def Mesh "Collider" (prepend apiSchemas = ["PhysicsCollisionAPI", "PhysicsMeshCo
 }
 '''
     attributes = ("orientation", "omni:fabric:worldMatrix")
-    with _physics_stage(usda, "mesh-orientation-contract") as (stage, pd):
+    with _populated_stage(usda, "mesh-orientation-contract") as (stage, pd):
         if _type_paths(stage, pd, "Mesh", 1) != ["/Collider"]:
-            pytest.xfail("ovpopulation does not select collider meshes under PHYSICS")
+            pytest.xfail("ovpopulation does not select collider meshes under the physics profile")
         with _path_list_query(stage, pd, ["/Collider"]) as query:
             columns = read_columns(stage, pd, query, attributes, 1)
-        _require_columns(columns, attributes, reason="PHYSICS collider geometry is incomplete")
-        assert pd.token_to_string(int(columns["orientation"][0][0])) == "leftHanded"
+        _require_columns(columns, attributes, reason="Physics-profile collider geometry is incomplete")
+        assert _stage._token_to_string(pd, int(columns["orientation"][0][0])) == "leftHanded"
         assert columns["omni:fabric:worldMatrix"][0].size == 16
 
 
@@ -105,13 +99,13 @@ def Xform "Body" (prepend apiSchemas = ["PhysicsRigidBodyAPI"]) {
 }
 '''
     attributes = ("usd-prim-type", "radius", "omni:fabric:worldMatrix")
-    with _physics_stage(usda, "newton-site-contract") as (stage, pd):
+    with _populated_stage(usda, "newton-site-contract") as (stage, pd):
         if "/Body/Site" not in _api_paths(stage, pd, 1, "NewtonSiteAPI"):
-            pytest.xfail("ovpopulation does not select NewtonSiteAPI prims under PHYSICS")
+            pytest.xfail("ovpopulation does not select NewtonSiteAPI prims under the physics profile")
         with _path_list_query(stage, pd, ["/Body/Site"]) as query:
             columns = read_columns(stage, pd, query, attributes, 1)
-        _require_columns(columns, attributes, reason="PHYSICS NewtonSiteAPI geometry is incomplete")
-        assert pd.token_to_string(int(columns["usd-prim-type"][0][0])) == "Sphere"
+        _require_columns(columns, attributes, reason="Physics-profile NewtonSiteAPI geometry is incomplete")
+        assert _stage._token_to_string(pd, int(columns["usd-prim-type"][0][0])) == "Sphere"
         assert columns["radius"][0].tolist() == [0.25]
         assert columns["omni:fabric:worldMatrix"][0].size == 16
 
@@ -195,11 +189,11 @@ def Xform "World" {
         "NewtonPositionBasedClampingAPI": {"/World/NeuralActuator"},
     }
     ragged = {"newton:targets", "newton:lookupPositions", "newton:lookupEfforts"}
-    with _physics_stage(usda, "actuator-contract") as (stage, pd):
+    with _populated_stage(usda, "actuator-contract") as (stage, pd):
         missing_actuators = set(contracts).difference(_type_paths(stage, pd, "NewtonActuator", 1))
         if missing_actuators:
             pytest.xfail(
-                "ovpopulation does not select NewtonActuator prims under PHYSICS: "
+                "ovpopulation does not select NewtonActuator prims under the physics profile: "
                 + ", ".join(sorted(missing_actuators))
             )
         missing_schemas = [
@@ -216,9 +210,9 @@ def Xform "World" {
             for attribute, value in expected.items():
                 row = columns[attribute][0]
                 if attribute == "newton:targets":
-                    actual = [pd.path_to_string(int(item)) for item in row]
+                    actual = [_stage._path_to_string(pd, int(item)) for item in row]
                 elif attribute == "newton:modelPath":
-                    actual = [pd.token_to_string(int(item)) for item in row]
+                    actual = [_stage._token_to_string(pd, int(item)) for item in row]
                 else:
                     actual = row.tolist()
                 assert actual == value
@@ -234,7 +228,7 @@ def Xform "Parent" (prepend apiSchemas = ["MaterialBindingAPI"]) {
     def Cube "Collider" (prepend apiSchemas = ["PhysicsCollisionAPI"]) {}
 }
 '''
-    with _physics_stage(usda, "material-binding-contract") as (stage, pd):
+    with _populated_stage(usda, "material-binding-contract") as (stage, pd):
         with _path_list_query(stage, pd, ["/Parent/Collider"]) as query:
             columns = read_columns(
                 stage,
@@ -249,7 +243,7 @@ def Xform "Parent" (prepend apiSchemas = ["MaterialBindingAPI"]) {
             ("material:binding:physics",),
             reason="ovpopulation does not mirror effective inherited physics-material binding",
         )
-        assert pd.path_to_string(int(columns["material:binding:physics"][0][0])) == "/PhysicsMaterial"
+        assert _stage._path_to_string(pd, int(columns["material:binding:physics"][0][0])) == "/PhysicsMaterial"
 
 
 def test_collection_material_binding_strength_is_resolved():
@@ -273,7 +267,7 @@ def Xform "World" (
     }
 }
 '''
-    with _physics_stage(usda, "collection-material-binding-contract") as (stage, pd):
+    with _populated_stage(usda, "collection-material-binding-contract") as (stage, pd):
         with _path_list_query(stage, pd, ["/World/Collider"]) as query:
             columns = read_columns(
                 stage,
@@ -288,7 +282,7 @@ def Xform "World" (
             ("material:binding:physics",),
             reason="ovpopulation does not resolve collection physics-material binding strength",
         )
-        material = pd.path_to_string(int(columns["material:binding:physics"][0][0]))
+        material = _stage._path_to_string(pd, int(columns["material:binding:physics"][0][0]))
         if material != "/StrongMaterial":
             pytest.xfail("ovpopulation does not resolve collection physics-material binding strength")
 
@@ -301,12 +295,12 @@ def Xform "Instance" (prepend references = </Prototype>) {}
 '''
 
 
-def test_native_instancing_is_exposed_to_python_under_all():
+def test_native_instancing_is_exposed_to_python_with_rendering():
     assert ovstage.instancing.available()
     with _populated_stage(
         _NATIVE_INSTANCE_USDA,
-        "native-instancing-all-contract",
-        PopulationDomain.ALL,
+        "native-instancing-rendering-contract",
+        PopulationDomain.RENDERING,
     ) as (stage, _):
         prototypes = ovstage.instancing.get_prototype_roots(stage)
         assert prototypes
@@ -316,10 +310,10 @@ def test_native_instancing_is_exposed_to_python_under_all():
 
 
 def test_native_instancing_is_exposed_under_physics():
-    with _physics_stage(_NATIVE_INSTANCE_USDA, "native-instancing-physics-contract") as (stage, _):
+    with _populated_stage(_NATIVE_INSTANCE_USDA, "native-instancing-physics-contract") as (stage, _):
         prototypes = ovstage.instancing.get_prototype_roots(stage)
         if not prototypes:
-            pytest.xfail("PHYSICS population does not expose native prototype mappings")
+            pytest.xfail("Physics population does not expose native prototype mappings")
         prototype = ovstage.instancing.get_prototype_root(stage, "/Instance")
         assert prototype in prototypes
         instances = ovstage.instancing.get_instance_roots(stage, prototype)
@@ -334,16 +328,16 @@ def TetMesh "SoftBody" {
 }
 '''
     attributes = ("points", "tetVertexIndices", "orientation", "omni:fabric:worldMatrix")
-    with _physics_stage(usda, "tetmesh-contract") as (stage, pd):
+    with _populated_stage(usda, "tetmesh-contract") as (stage, pd):
         paths = _type_paths(stage, pd, "TetMesh", 1)
         if not paths:
-            pytest.xfail("ovpopulation does not select bare UsdGeom.TetMesh prims under PHYSICS")
+            pytest.xfail("ovpopulation does not select bare UsdGeom.TetMesh prims under the physics profile")
         with _path_list_query(stage, pd, paths) as query:
             columns = read_columns(stage, pd, query, attributes, 1, ragged=("points", "tetVertexIndices"))
-        _require_columns(columns, attributes, reason="PHYSICS TetMesh geometry is incomplete")
+        _require_columns(columns, attributes, reason="Physics-profile TetMesh geometry is incomplete")
         assert columns["points"][0].size == 12
         assert columns["tetVertexIndices"][0].tolist() == [0, 1, 2, 3]
-        assert pd.token_to_string(int(columns["orientation"][0][0])) == "rightHanded"
+        assert _stage._token_to_string(pd, int(columns["orientation"][0][0])) == "rightHanded"
         assert columns["omni:fabric:worldMatrix"][0].size == 16
 
 
@@ -622,7 +616,7 @@ def PhysicsElementCollisionFilter "ElementFilter" {
         "physics:restBendAnglesDefault",
     }
 
-    with _physics_stage(usda, "aousd-deformable-contract") as (stage, pd):
+    with _populated_stage(usda, "aousd-deformable-contract") as (stage, pd):
         missing_schemas = []
         for schema, expected in api_paths.items():
             if not expected.issubset(_api_paths(stage, pd, 1, schema)):
@@ -648,10 +642,10 @@ def PhysicsElementCollisionFilter "ElementFilter" {
             for attribute, expected_value in expected.items():
                 row = values[path][attribute][0]
                 if attribute in path_attributes:
-                    actual = [pd.path_to_string(int(item)) for item in row]
+                    actual = [_stage._path_to_string(pd, int(item)) for item in row]
                     assert actual == expected_value
                 elif attribute in token_attributes:
-                    assert pd.token_to_string(int(row[0])) == expected_value
+                    assert _stage._token_to_string(pd, int(row[0])) == expected_value
                 elif expected_value is None:
                     assert row.size == 16
                 else:

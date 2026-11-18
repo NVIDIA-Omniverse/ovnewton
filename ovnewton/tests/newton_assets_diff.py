@@ -12,12 +12,16 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import importlib.metadata
 import json
 import os
 import pathlib
+import platform
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 _RESULT_PREFIX = "OVNEWTON_ASSET_RESULT "
 
@@ -27,7 +31,12 @@ class AssetCase:
     name: str
     folder: str
     scene: str
-    expectation: str
+    expectation: str | None
+    profile: str = "core"
+    mujoco_expectation: str | None = None
+
+    def expected_outcome(self, profile: str) -> str | None:
+        return self.mujoco_expectation if profile == "mujoco" and self.mujoco_expectation else self.expectation
 
 
 # Entry scenes with authored physics. Payload, prototype, and visual-only files
@@ -36,9 +45,11 @@ PINNED_ASSET_CASES = (
     AssetCase("anymal_c", "anybotics_anymal_c", "usd/anymal_c.usda", "native-instancing"),
     AssetCase("anymal_d", "anybotics_anymal_d", "usd/anymal_d.usda", "native-instancing"),
     AssetCase(
-        "apptronik_apollo", "apptronik_apollo", "usd_structured/apptronik_apollo.usda", "mjc-actuator-force-range"
+        "apptronik_apollo", "apptronik_apollo", "usd_structured/apptronik_apollo.usda",
+        None, "mujoco", "match"
     ),
-    AssetCase("booster_t1", "booster_t1", "usd_structured/T1.usda", "mjc-actuator-force-range"),
+    AssetCase("booster_t1", "booster_t1", "usd_structured/T1.usda",
+              None, "mujoco", "match"),
     AssetCase("dr_legs", "disneyresearch", "dr_legs/usd/dr_legs.usda", "match"),
     AssetCase("dr_legs_boxes", "disneyresearch", "dr_legs/usd/dr_legs_with_boxes.usda", "match"),
     AssetCase(
@@ -47,9 +58,11 @@ PINNED_ASSET_CASES = (
         "dr_legs/usd/dr_legs_with_meshes_and_boxes.usda",
         "match",
     ),
-    AssetCase("dr_testmech", "disneyresearch", "dr_testmech/usd/dr_testmech.usda", "rootless-floor-drift"),
-    AssetCase("robotiq_2f85", "robotiq_2f85_v4", "usd_structured/Dual_wrist_camera.usda", "mjc-solver-registration"),
-    AssetCase("shadow_hand", "shadow_hand", "usd_structured/left_shadow_hand.usda", "match"),
+    AssetCase("dr_testmech", "disneyresearch", "dr_testmech/usd/dr_testmech.usda", "match"),
+    AssetCase("robotiq_2f85", "robotiq_2f85_v4", "usd_structured/Dual_wrist_camera.usda",
+              "mjc-solver-registration", "mujoco", "mjc-actuator-joint"),
+    AssetCase("shadow_hand", "shadow_hand", "usd_structured/left_shadow_hand.usda",
+              "mjc-solver-registration", "mujoco", "mjc-actuator-joint"),
     AssetCase("unitree_g1", "unitree_g1", "usd/g1.usd", "native-instancing"),
     AssetCase("unitree_g1_hands", "unitree_g1", "usd/g1_29dof_with_hand_rev_1_0.usd", "match"),
     AssetCase("unitree_g1_isaac", "unitree_g1", "usd/g1_isaac.usd", "native-instancing"),
@@ -58,20 +71,23 @@ PINNED_ASSET_CASES = (
         "unitree_g1_structured",
         "unitree_g1",
         "usd_structured/g1_29dof_with_hand_rev_1_0.usda",
-        "mjc-actuator-force-range",
+        None, "mujoco", "match",
     ),
     AssetCase("unitree_go2", "unitree_go2", "usd/go2.usda", "native-instancing"),
     AssetCase("unitree_h1_minimal", "unitree_h1", "usd/h1_minimal.usda", "native-instancing"),
-    AssetCase("unitree_h1_structured", "unitree_h1", "usd_structured/h1.usda", "match"),
+    AssetCase("unitree_h1_structured", "unitree_h1", "usd_structured/h1.usda",
+              "mjc-solver-registration", "mujoco", "mjc-actuator-configuration"),
     AssetCase("ur10_instanceable", "universal_robots_ur10", "usd/ur10_instanceable.usda", "match"),
-    AssetCase("ur5e", "universal_robots_ur5e", "usd_structured/ur5e.usda", "match"),
+    AssetCase("ur5e", "universal_robots_ur5e", "usd_structured/ur5e.usda",
+              "mjc-solver-registration", "mujoco", "match"),
     AssetCase(
         "wonik_allegro",
         "wonik_allegro",
         "usd/allegro_left_hand_with_cube.usda",
-        "native-instancing",
+        "physics-point-instancer",
     ),
-    AssetCase("wonik_allegro_structured", "wonik_allegro", "usd_structured/allegro_left.usda", "match"),
+    AssetCase("wonik_allegro_structured", "wonik_allegro", "usd_structured/allegro_left.usda",
+              "mjc-solver-registration", "mujoco", "match"),
 )
 
 LATEST_ASSET_CASES = PINNED_ASSET_CASES + (
@@ -108,6 +124,7 @@ def _error(exc: Exception) -> dict[str, str]:
 def _worker(
     asset: pathlib.Path,
     name: str,
+    profile: str,
 ) -> int:
     import diff_harness as dh
     import ovstage
@@ -121,6 +138,7 @@ def _worker(
         ref = dh.reference_model(
             str(asset),
             load_visual_shapes=False,
+            include_mjc_resolver=profile == "mujoco",
         )
     except Exception as exc:
         ref_error = _error(exc)
@@ -128,12 +146,24 @@ def _worker(
     try:
         ovnewton.register_usd_schemas()
         with ovstage.Stage(f"asset-diff-{name}") as stage:
+            # Rendering population also exposes composed collider instances to the audit.
             population.open_usd_with_desc(
                 stage, str(asset), ordinal=1, time=population.DEFAULT_TIME,
-                descs=(population.Desc(domains=PopulationDomain.ALL), ovnewton.population_desc()),
+                descs=(population.Desc(domains=PopulationDomain.RENDERING), ovnewton.population_desc()),
             )
             stage.advance_write_floor(ordinal=1).wait()
-            model = ovnewton.attach_ovstage(stage).model
+            if profile == "mujoco":
+                import newton
+
+                builder = newton.ModelBuilder()
+                newton.solvers.SolverMuJoCo.register_custom_attributes(builder)
+                imported = ovnewton.add_ovstage(builder, stage)
+                if builder.particle_count:
+                    builder.color(include_bending=True)
+                model = builder.finalize(skip_validation_joints=imported.has_orphan_joints)
+                ovnewton.attach_ovstage(stage, model=model)
+            else:
+                model = ovnewton.attach_ovstage(stage).model
             ours = dh._model_arrays(model)
     except Exception as exc:
         ours_error = _error(exc)
@@ -162,19 +192,24 @@ def _worker(
             "bodies": len(ref["body_label"]),
             "shapes": len(ref["shape_label"]),
             "joints": len(ref["joint_label"]),
+            "mujoco_actuators": len(ref.get("mjc_actuators", {})),
         }
         result["ovnewton_counts"] = {
             "bodies": len(ours["body_label"]),
             "shapes": len(ours["shape_label"]),
             "joints": len(ours["joint_label"]),
+            "mujoco_actuators": len(ours.get("mjc_actuators", {})),
         }
 
     print(_RESULT_PREFIX + json.dumps(result, sort_keys=True), flush=True)
     return 0
 
 
-def _run_worker(asset: pathlib.Path, case: AssetCase, timeout: float, verbose: bool) -> dict[str, object]:
-    command = [sys.executable, __file__, "--worker", str(asset), "--worker-name", case.name]
+def _run_worker(
+    asset: pathlib.Path, case: AssetCase, timeout: float, verbose: bool, profile: str = "core"
+) -> dict[str, object]:
+    command = [sys.executable, __file__, "--worker", str(asset), "--worker-name", case.name, "--profile", profile]
+    started = time.perf_counter()
     try:
         proc = subprocess.run(
             command,
@@ -184,23 +219,53 @@ def _run_worker(asset: pathlib.Path, case: AssetCase, timeout: float, verbose: b
             timeout=timeout,
         )
     except subprocess.TimeoutExpired as exc:
-        return {"name": case.name, "asset": str(asset), "outcome": "timeout", "message": str(exc)}
+        return {
+            "name": case.name, "asset": str(asset), "outcome": "timeout", "message": str(exc),
+            "worker_seconds": time.perf_counter() - started,
+            "stdout": exc.stdout.decode(errors="replace") if isinstance(exc.stdout, bytes) else exc.stdout or "",
+            "stderr": exc.stderr.decode(errors="replace") if isinstance(exc.stderr, bytes) else exc.stderr or "",
+        }
 
     output = proc.stdout.splitlines()
     line = next((line for line in reversed(output) if line.startswith(_RESULT_PREFIX)), None)
     if verbose:
         print(proc.stdout, end="")
         print(proc.stderr, end="", file=sys.stderr)
+    invalid_result = None
     if proc.returncode == 0 and line is not None:
-        return json.loads(line[len(_RESULT_PREFIX) :])
+        try:
+            result = json.loads(line[len(_RESULT_PREFIX) :])
+            if not isinstance(result, dict) or result.get("name") != case.name or result.get("asset") != str(asset):
+                raise ValueError("worker result does not identify the requested asset")
+            outcome = result.get("outcome")
+            if outcome not in ("match", "mismatch", "reference-error", "ovnewton-error", "both-error"):
+                raise ValueError("invalid worker outcome")
+            if outcome == "mismatch" and not isinstance(result.get("mismatches"), list):
+                raise ValueError("missing mismatch list")
+            for side in ("reference", "ovnewton"):
+                if outcome in (f"{side}-error", "both-error"):
+                    error = result.get(f"{side}_error")
+                    if not isinstance(error, dict) or not all(
+                        isinstance(error.get(k), str) for k in ("type", "message")
+                    ):
+                        raise ValueError(f"missing {side} error")
+            _format_result(result)  # Check the fields required by the console summary too.
+        except (ValueError, TypeError, KeyError, AttributeError) as exc:
+            invalid_result = f"invalid worker result: {exc}"
+        else:
+            result.update(stdout=proc.stdout, stderr=proc.stderr, worker_seconds=time.perf_counter() - started)
+            return result
 
     details = "\n".join((proc.stderr or proc.stdout).splitlines()[-12:])
     return {
         "name": case.name,
         "asset": str(asset),
-        "outcome": "worker-crash",
+        "outcome": "worker-error" if proc.returncode == 0 else "worker-crash",
         "returncode": proc.returncode,
-        "message": details,
+        "message": invalid_result or details,
+        "stdout": proc.stdout,
+        "stderr": proc.stderr,
+        "worker_seconds": time.perf_counter() - started,
     }
 
 
@@ -243,44 +308,100 @@ def _matches_expectation(case: AssetCase, result: dict[str, object]) -> bool:
     outcome = result["outcome"]
     ours = result.get("ovnewton_error") or {}
     message = str(ours.get("message", ""))
-    mismatches = result.get("mismatches") or []
-    if case.expectation == "match":
+    expectation = result.get("expectation", case.expectation)
+    actuator_errors = {
+        "mjc-actuator-joint": " requires an unmerged scalar joint: ",
+        "mjc-actuator-configuration": " requires fixed gain, affine bias and unit gear without dynamics",
+    }
+    if expectation in actuator_errors:
+        return (
+            outcome == "ovnewton-error"
+            and ours.get("type") == "UnsupportedPhysicsError"
+            and message.startswith("MjcActuator at ")
+            and actuator_errors[expectation] in message
+        )
+    if expectation == "match":
         return outcome == "match"
-    if case.expectation == "native-instancing":
+    if expectation == "native-instancing":
         return (
             outcome == "ovnewton-error"
             and ours.get("type") == "UnsupportedPhysicsError"
             and "native USD" in message
             and "instancing" in message
         )
-    if case.expectation == "mjc-actuator-force-range":
+    if expectation == "physics-point-instancer":
         return (
             outcome == "ovnewton-error"
             and ours.get("type") == "UnsupportedPhysicsError"
-            and message.startswith((
-                "unsupported mjc:actuatorfrcrange:min at ",
-                "unsupported mjc:actuatorfrcrange:max at ",
-            ))
+            and message.startswith("physics PointInstancer is unsupported at ")
         )
-    if case.expectation == "rootless-floor-drift":
-        return outcome == "match" or (
-            outcome == "mismatch"
-            and len(mismatches) == 2
-            and any(".joint_articulation:" in str(item) for item in mismatches)
-            and any(str(item).startswith("articulation count:") for item in mismatches)
-        )
-    if case.expectation == "mjc-solver-registration":
+    if expectation == "mjc-solver-registration":
         return (
             outcome == "ovnewton-error"
             and ours.get("type") == "UnsupportedPhysicsError"
-            and message.startswith("mjc:solreflimit at ")
+            and message.startswith(("mjc:solreflimit at ", "MjcActuator requires "))
             and message.endswith("requires SolverMuJoCo.register_custom_attributes(builder) before add_ovstage")
         )
-    raise ValueError(f"unknown expectation: {case.expectation}")
+    raise ValueError(f"unknown expectation: {expectation}")
+
+
+
+def _git_revision(path: pathlib.Path) -> str | None:
+    """Record the checkout actually used, including symlinked asset caches."""
+    try:
+        tracked = subprocess.check_output(
+            ["git", "-C", str(path.resolve()), "ls-files", "--", "."],
+            text=True, stderr=subprocess.DEVNULL, timeout=10,
+        )
+        if not tracked.strip():
+            return None
+        return subprocess.check_output(
+            ["git", "-C", str(path.resolve()), "rev-parse", "HEAD"],
+            text=True, stderr=subprocess.DEVNULL, timeout=10,
+        ).strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+
+def _git_dirty(path: pathlib.Path) -> bool | None:
+    try:
+        return bool(subprocess.check_output(
+            ["git", "-C", str(path.resolve()), "status", "--porcelain", "--", "."],
+            text=True, stderr=subprocess.DEVNULL, timeout=10,
+        ).strip())
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def _report_metadata() -> dict[str, object]:
+    packages = {}
+    for name in ("ovnewton", "newton", "ovstage", "ovrtx", "warp-lang", "usd-core", "numpy"):
+        try:
+            packages[name] = importlib.metadata.version(name)
+        except importlib.metadata.PackageNotFoundError:
+            packages[name] = None
+    repo = pathlib.Path(__file__).resolve().parents[2]
+    source = os.environ.get("OVNEWTON_NEWTON_SOURCE")
+    return {
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "python": sys.version, "platform": platform.platform(), "packages": packages,
+        "ovnewton_source": str(repo), "ovnewton_commit": _git_revision(repo),
+        "ovnewton_dirty": _git_dirty(repo),
+        "newton_source": source,
+        "newton_source_commit": _git_revision(pathlib.Path(source)) if source else None,
+        "newton_source_dirty": _git_dirty(pathlib.Path(source)) if source else None,
+        "reference_profiles": {"core": ["SchemaResolverNewton"],
+                               "mujoco": ["SchemaResolverNewton", "SchemaResolverMjc"]},
+        "reference_options": {"apply_up_axis_from_stage": True, "load_visual_shapes": False},
+        "pxr_work_thread_limit": _source_environment()["PXR_WORK_THREAD_LIMIT"],
+    }
 
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--profile", choices=("auto", "core", "mujoco"), default="auto",
+                        help="auto uses each case's recorded profile; mujoco registers solver attributes on both paths")
     parser.add_argument("--asset", action="append", default=[], help="case name or glob; repeatable")
     parser.add_argument("--asset-root", type=pathlib.Path, help="existing newton-assets checkout")
     parser.add_argument(
@@ -292,6 +413,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--list", action="store_true", help="list corpus cases without downloading")
     parser.add_argument("--strict", action="store_true", help="return nonzero for outcomes outside the manifest")
     parser.add_argument("--timeout", type=float, default=180.0, help="worker timeout in seconds")
+    parser.add_argument("--report", type=pathlib.Path, help="save complete results and provenance as JSON")
     parser.add_argument("--verbose", action="store_true", help="show worker output")
     parser.add_argument("--worker", type=pathlib.Path, help=argparse.SUPPRESS)
     parser.add_argument("--worker-name", help=argparse.SUPPRESS)
@@ -304,6 +426,7 @@ def main() -> int:
         return _worker(
             args.worker,
             args.worker_name or args.worker.stem,
+            args.profile if args.profile != "auto" else "core",
         )
 
     if args.latest_assets and args.asset_root is None and not args.list:
@@ -318,8 +441,17 @@ def main() -> int:
         return 2
     if args.list:
         for case in cases:
-            print(f"{case.name:30} {case.expectation:22} {case.folder}/{case.scene}")
+            profile = case.profile if args.profile == "auto" else args.profile
+            expectation = case.expected_outcome(profile) or "requires-mujoco-profile"
+            print(f"{case.name:30} {expectation:22} {profile:8} {case.folder}/{case.scene}")
         return 0
+
+    incompatible = [case.name for case in cases if case.expected_outcome(
+        case.profile if args.profile == "auto" else args.profile
+    ) is None]
+    if incompatible:
+        print("error: MuJoCo reference profile required for: " + ", ".join(incompatible), file=sys.stderr)
+        return 2
 
     if args.asset_root is None:
         newton_source = os.environ.get("OVNEWTON_NEWTON_SOURCE")
@@ -331,10 +463,14 @@ def main() -> int:
     else:
         print(f"newton-assets checkout: {args.asset_root.resolve()}")
 
+    started = time.perf_counter()
+    report = {"schema_version": 1, "metadata": _report_metadata(), "assets": {}}
     roots: dict[str, pathlib.Path | dict[str, str]] = {}
     results = []
     for case in cases:
+        profile = case.profile if args.profile == "auto" else args.profile
         if case.folder not in roots:
+            acquired = time.perf_counter()
             try:
                 if args.asset_root is not None:
                     roots[case.folder] = args.asset_root / case.folder
@@ -347,6 +483,14 @@ def main() -> int:
                     )
             except Exception as exc:
                 roots[case.folder] = _error(exc)
+            root = roots[case.folder]
+            commit = _git_revision(root) if isinstance(root, pathlib.Path) and root.is_dir() else None
+            report["assets"][case.folder] = {
+                "root": str(root.resolve()) if isinstance(root, pathlib.Path) else None,
+                "commit": commit,
+                "dirty": _git_dirty(root) if commit else None,
+                "acquisition_seconds": time.perf_counter() - acquired,
+            }
         root = roots[case.folder]
         asset = (root / case.scene) if isinstance(root, pathlib.Path) else pathlib.Path(case.folder) / case.scene
         if isinstance(root, dict):
@@ -359,8 +503,9 @@ def main() -> int:
         elif not asset.is_file():
             result = {"name": case.name, "asset": str(asset), "outcome": "missing", "message": "file not found"}
         else:
-            result = _run_worker(asset, case, args.timeout, args.verbose)
-        result["expectation"] = case.expectation
+            result = _run_worker(asset, case, args.timeout, args.verbose, profile)
+        result["profile"] = profile
+        result["expectation"] = case.expected_outcome(profile)
         result["as_expected"] = _matches_expectation(case, result)
         results.append(result)
         print(_format_result(result), flush=True)
@@ -372,6 +517,16 @@ def main() -> int:
     print("summary: " + ", ".join(f"{name}={count}" for name, count in sorted(counts.items())))
     unexpected = sum(not result["as_expected"] for result in results)
     print(f"manifest: expected={len(results) - unexpected}, unexpected={unexpected}")
+    print(f"supported and matching: {counts.get('match', 0)}/{len(results)}")
+    if args.report:
+        report.update(
+            manifest="latest" if args.latest_assets else "pinned", results=results,
+            summary={"outcomes": counts, "total": len(results), "matching": counts.get("match", 0),
+                     "expected": len(results) - unexpected, "unexpected": unexpected},
+            elapsed_seconds=time.perf_counter() - started,
+        )
+        args.report.parent.mkdir(parents=True, exist_ok=True)
+        args.report.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return int(args.strict and unexpected != 0)
 
 

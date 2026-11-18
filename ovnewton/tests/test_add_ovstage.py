@@ -6,7 +6,7 @@ import numpy as np
 import ovstage
 import pytest
 import warp as wp
-from ovstage import PopulationDomain, population
+from ovstage import population
 
 import ovnewton
 
@@ -178,7 +178,9 @@ def test_vbd_can_prepare_caller_owned_builder_before_finalizing():
     newton.solvers.SolverVBD.register_custom_attributes(builder)
 
     with ovstage.Stage("add-ovstage-vbd") as stage:
-        population.open_usd_from_string(stage, _RIGID_BODY, ordinal=1, domains=PopulationDomain.PHYSICS)
+        population.open_usd_from_string_with_desc(
+            stage, _RIGID_BODY, ordinal=1, time=population.DEFAULT_TIME, descs=[ovnewton.population_desc()]
+        )
         stage.advance_write_floor(ordinal=1).wait()
 
         result = ovnewton.add_ovstage(builder, stage)
@@ -200,7 +202,9 @@ def test_add_ovstage_rejects_a_builder_that_already_contains_model_entities():
     builder.add_body(label="/Existing")
 
     with ovstage.Stage("add-ovstage-nonempty") as stage:
-        population.open_usd_from_string(stage, _RIGID_BODY, ordinal=1, domains=PopulationDomain.PHYSICS)
+        population.open_usd_from_string_with_desc(
+            stage, _RIGID_BODY, ordinal=1, time=population.DEFAULT_TIME, descs=[ovnewton.population_desc()]
+        )
         stage.advance_write_floor(ordinal=1).wait()
 
         with pytest.raises(ValueError, match="builder must not contain model entities"):
@@ -212,7 +216,9 @@ def test_add_ovstage_rejects_preexisting_collision_filter_pairs():
     builder.add_shape_collision_filter_pair(0, 1)
 
     with ovstage.Stage("add-ovstage-collision-filter-pair") as stage:
-        population.open_usd_from_string(stage, _RIGID_BODY, ordinal=1, domains=PopulationDomain.PHYSICS)
+        population.open_usd_from_string_with_desc(
+            stage, _RIGID_BODY, ordinal=1, time=population.DEFAULT_TIME, descs=[ovnewton.population_desc()]
+        )
         stage.advance_write_floor(ordinal=1).wait()
 
         with pytest.raises(ValueError, match="shape_collision_filter_pairs=1"):
@@ -224,7 +230,9 @@ def test_add_ovstage_rejects_populated_custom_frequencies():
     builder.add_custom_values(**{"mujoco:equality_constraint_type": 1})
 
     with ovstage.Stage("add-ovstage-custom-frequency-values") as stage:
-        population.open_usd_from_string(stage, _RIGID_BODY, ordinal=1, domains=PopulationDomain.PHYSICS)
+        population.open_usd_from_string_with_desc(
+            stage, _RIGID_BODY, ordinal=1, time=population.DEFAULT_TIME, descs=[ovnewton.population_desc()]
+        )
         stage.advance_write_floor(ordinal=1).wait()
 
         with pytest.raises(ValueError, match="custom_frequency:mujoco:equality_constraint=1"):
@@ -243,7 +251,9 @@ def test_add_ovstage_rejects_populated_custom_attributes():
     )
 
     with ovstage.Stage("add-ovstage-custom-attribute-values") as stage:
-        population.open_usd_from_string(stage, _RIGID_BODY, ordinal=1, domains=PopulationDomain.PHYSICS)
+        population.open_usd_from_string_with_desc(
+            stage, _RIGID_BODY, ordinal=1, time=population.DEFAULT_TIME, descs=[ovnewton.population_desc()]
+        )
         stage.advance_write_floor(ordinal=1).wait()
 
         with pytest.raises(ValueError, match="custom_attribute:stale=1"):
@@ -252,10 +262,12 @@ def test_add_ovstage_rejects_populated_custom_attributes():
 
 def test_add_ovstage_rejects_preexisting_actuator_entries():
     builder = newton.ModelBuilder()
-    builder.add_actuator(newton.actuators.ControllerPD, index=0, kp=1.0)
+    builder.add_actuator(newton.actuators.DrivePD, index=0, kp=1.0)
 
     with ovstage.Stage("add-ovstage-actuator-entry") as stage:
-        population.open_usd_from_string(stage, _RIGID_BODY, ordinal=1, domains=PopulationDomain.PHYSICS)
+        population.open_usd_from_string_with_desc(
+            stage, _RIGID_BODY, ordinal=1, time=population.DEFAULT_TIME, descs=[ovnewton.population_desc()]
+        )
         stage.advance_write_floor(ordinal=1).wait()
 
         with pytest.raises(ValueError, match="actuator_entries=1"):
@@ -266,7 +278,9 @@ def test_add_ovstage_reports_rootless_joints_that_need_validation_skipped():
     builder = newton.ModelBuilder()
 
     with ovstage.Stage("add-ovstage-rootless") as stage:
-        population.open_usd_from_string(stage, _ROOTLESS_JOINTS, ordinal=1, domains=PopulationDomain.PHYSICS)
+        population.open_usd_from_string_with_desc(
+            stage, _ROOTLESS_JOINTS, ordinal=1, time=population.DEFAULT_TIME, descs=[ovnewton.population_desc()]
+        )
         stage.advance_write_floor(ordinal=1).wait()
 
         result = ovnewton.add_ovstage(builder, stage)
@@ -282,7 +296,9 @@ def test_add_ovstage_preserves_builder_defaults_and_applies_stage_settings():
     builder.default_shape_cfg.ke = 4321.0
 
     with ovstage.Stage("add-ovstage-settings") as stage:
-        population.open_usd_from_string(stage, _Y_UP_BODY, ordinal=1, domains=PopulationDomain.PHYSICS)
+        population.open_usd_from_string_with_desc(
+            stage, _Y_UP_BODY, ordinal=1, time=population.DEFAULT_TIME, descs=[ovnewton.population_desc()]
+        )
         stage.advance_write_floor(ordinal=1).wait()
 
         ovnewton.add_ovstage(builder, stage)
@@ -296,7 +312,9 @@ def test_add_ovstage_preserves_builder_defaults_and_applies_stage_settings():
 @pytest.mark.parametrize("import_api", ["add_ovstage", "attach_ovstage"])
 def test_public_import_preserves_distinct_scalar_vector_and_matrix_rows(import_api):
     with wp.ScopedDevice("cpu"), ovstage.Stage("multi-body-import") as stage:
-        population.open_usd_from_string(stage, _MULTI_BODY_STATE, ordinal=1, domains=PopulationDomain.PHYSICS)
+        population.open_usd_from_string_with_desc(
+            stage, _MULTI_BODY_STATE, ordinal=1, time=population.DEFAULT_TIME, descs=[ovnewton.population_desc()]
+        )
         stage.advance_write_floor(ordinal=1).wait()
 
         if import_api == "add_ovstage":
@@ -324,7 +342,9 @@ def test_public_binding_roundtrips_distinct_body_state(device):
         pytest.skip("CUDA is unavailable")
 
     with wp.ScopedDevice(device), ovstage.Stage("multi-body-roundtrip") as stage:
-        population.open_usd_from_string(stage, _MULTI_BODY_STATE, ordinal=1, domains=PopulationDomain.PHYSICS)
+        population.open_usd_from_string_with_desc(
+            stage, _MULTI_BODY_STATE, ordinal=1, time=population.DEFAULT_TIME, descs=[ovnewton.population_desc()]
+        )
         stage.advance_write_floor(ordinal=1).wait()
         builder = newton.ModelBuilder()
         ovnewton.add_ovstage(builder, stage)
@@ -366,7 +386,9 @@ def test_add_ovstage_preserves_builder_joint_defaults_for_d6():
     builder.default_joint_cfg.actuator_mode = newton.JointTargetMode.EFFORT
 
     with ovstage.Stage("add-ovstage-d6-defaults") as stage:
-        population.open_usd_from_string(stage, _D6_JOINT, ordinal=1, domains=PopulationDomain.PHYSICS)
+        population.open_usd_from_string_with_desc(
+            stage, _D6_JOINT, ordinal=1, time=population.DEFAULT_TIME, descs=[ovnewton.population_desc()]
+        )
         stage.advance_write_floor(ordinal=1).wait()
 
         ovnewton.add_ovstage(builder, stage)
@@ -381,7 +403,9 @@ def test_add_ovstage_preserves_builder_joint_defaults_for_merged_d6():
     builder.default_joint_cfg.damping = 123.0
 
     with ovstage.Stage("add-ovstage-merged-d6-defaults") as stage:
-        population.open_usd_from_string(stage, _MERGED_D6_JOINTS, ordinal=1, domains=PopulationDomain.PHYSICS)
+        population.open_usd_from_string_with_desc(
+            stage, _MERGED_D6_JOINTS, ordinal=1, time=population.DEFAULT_TIME, descs=[ovnewton.population_desc()]
+        )
         stage.advance_write_floor(ordinal=1).wait()
 
         ovnewton.add_ovstage(builder, stage)
@@ -396,7 +420,9 @@ def test_add_ovstage_stage_joint_values_override_builder_defaults_for_d6():
     builder.default_joint_cfg.actuator_mode = newton.JointTargetMode.EFFORT
 
     with ovstage.Stage("add-ovstage-d6-stage-overrides") as stage:
-        population.open_usd_from_string(stage, _D6_JOINT_WITH_DAMPING, ordinal=1, domains=PopulationDomain.PHYSICS)
+        population.open_usd_from_string_with_desc(
+            stage, _D6_JOINT_WITH_DAMPING, ordinal=1, time=population.DEFAULT_TIME, descs=[ovnewton.population_desc()]
+        )
         stage.advance_write_floor(ordinal=1).wait()
 
         ovnewton.add_ovstage(builder, stage)
@@ -406,20 +432,43 @@ def test_add_ovstage_stage_joint_values_override_builder_defaults_for_d6():
     assert _d6_dof_values(builder, builder.joint_target_mode) == [newton.JointTargetMode.POSITION]
 
 
-def test_mujoco_can_register_attributes_before_add_ovstage():
+def test_mujoco_can_register_attributes_before_add_ovstage(warp_device):
     pytest.importorskip("mujoco")
+    pytest.importorskip("mujoco_warp")
     builder = newton.ModelBuilder()
     newton.solvers.SolverMuJoCo.register_custom_attributes(builder)
 
     with ovstage.Stage("add-ovstage-mujoco") as stage:
-        population.open_usd_from_string(stage, _RIGID_BODY, ordinal=1, domains=PopulationDomain.PHYSICS)
+        population.open_usd_from_string_with_desc(
+            stage, _RIGID_BODY, ordinal=1, time=population.DEFAULT_TIME, descs=[ovnewton.population_desc()]
+        )
         stage.advance_write_floor(ordinal=1).wait()
 
         ovnewton.add_ovstage(builder, stage)
-        model = builder.finalize()
-        solver = newton.solvers.SolverMuJoCo(model, use_mujoco_cpu=True)
+        model = builder.finalize(device=warp_device)
+        solver = newton.solvers.SolverMuJoCo(model)
         binding = ovnewton.attach_ovstage(stage, model=model)
 
     assert binding.model is model
     assert model.mujoco.gravcomp.shape == (model.body_count,)
     assert isinstance(solver, newton.solvers.SolverMuJoCo)
+
+
+def test_empty_collider_axis_is_rejected():
+    """OVStage 0.4 token zero is an authored empty string, not a missing axis."""
+    usda = '''#usda 1.0
+(
+    metersPerUnit = 1
+    upAxis = "Z"
+)
+def Capsule "Collider" (prepend apiSchemas = ["PhysicsCollisionAPI"]) {
+    uniform token axis = ""
+}
+'''
+    with ovstage.Stage("empty-collider-axis") as stage:
+        population.open_usd_from_string_with_desc(
+            stage, usda, ordinal=1, time=population.DEFAULT_TIME, descs=[ovnewton.population_desc()]
+        )
+        stage.advance_write_floor(1).wait()
+        with pytest.raises(ovnewton.InvalidPhysicsError, match="invalid physics axis token '' at /Collider"):
+            ovnewton.add_ovstage(newton.ModelBuilder(), stage)

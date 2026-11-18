@@ -7,6 +7,54 @@ SPDX-License-Identifier: Apache-2.0
 
 Notable user-facing changes to ovnewton.
 
+## [0.3.0] - 2026-11-18
+
+### Upgrading from 0.2.1
+
+Upgrade the runtime stack together: use Newton 1.8 or newer, OVStage 0.4,
+and optional OVRTX 0.7 for rendering examples. The exact requirements are
+listed below.
+
+`StageBinding.read()` now separates prim groups from attribute columns.
+Iterate `group.columns` to access values, tensor metadata and CUDA readiness.
+Use each column's `data_row_index(i)` to map a group's prim row to its value
+row. Newton-native units, zero-copy paths and result lifetime rules are
+unchanged.
+
+### Added
+
+- Discover read fields through `ovnewton.read_fields()` and `ovnewton.attributes.list_attributes()` / `get_attribute()`. Their `ReadField` metadata and the read field reference describe source arrays, units, frames, joint layouts, device and storage behavior.
+- Read Newton-native drive gains and limits through `joint_target_ke`, `joint_target_kd`, `joint_limit_lower`, `joint_limit_upper` and `joint_velocity_limit`, without conversion to USD units or authored body order.
+- Read additional Newton-native body and joint properties through `body_mass`, `body_inertia`, `body_com`, `body_qdd`, `joint_effort_limit`, `joint_armature` and `joint_friction`.
+- Read commanded joint effort through `joint_f`, preserving `Control.joint_f` units, DOF layout and device storage. This is commanded force/torque, not measured effort or a solver result.
+- Add native `joint_target_q` / `joint_target_qd` reads and `StageBinding.write()` for selected scalar articulation-joint targets, using Newton-native units without stage exchange.
+- Import open-curve cables with fixed rigid transforms, density-derived mass, VBD dynamics and simulated local-point publication.
+- Support cloth in fixed translated and rotated geometry frames, publishing simulated points back to USD-local coordinates.
+- Import tetrahedral volumes with fixed rigid transforms, density-derived mass and simulated local-point publication.
+- Ship `example_ovnewton_deformables` and its scene, simulating cables, cloth and a tetrahedral volume together with VBD.
+- Right-drag rigid bodies and robot links in the example viewers to apply spring forces, including with CUDA graphs. Cloth particles are not pickable.
+- Import scalar MuJoCo position/velocity actuators with control and force limits and damping-ratio preservation, following Newton's USD importer.
+- Import scalar MuJoCo joint actuator-force limits while preserving USD drive precedence.
+- Select final releases or `dev (main)` in the documentation version menu, preserving the current page when available.
+
+### Changed
+
+- Require Newton `>=1.8.0`, OVStage `==0.4.0.1794520352`, and optional OVRTX `>=0.7.0.1794596436,<0.8`. These versions are available from public package sources.
+- Support Newton USD schemas 0.6 while retaining compatibility with 0.5.
+- Replay basic, robot, and deformables example physics with CUDA graphs by default; use `--cuda-graph false` to run the direct loop. CPU simulation stays on the direct loop.
+- Reduce redundant array copies and stage reads during model import and attachment.
+
+### Fixed
+
+- Resolve collision-group membership through OVStage's USD collection resolver, including explicit-only selections, nested collections and root inclusion.
+- Preserve authored joint direction when body-to-world joints are reordered, including supported scalar and D6 axes. Keep Newton-native coordinates, targets and limits unchanged, and keep standard reads and scalar stage updates consistent for caller-owned models.
+- Match Newton 1.8's MuJoCo weld relative poses and loop-joint frames, keeping rotation free when torque scale is zero.
+- Preserve omitted Newton joint overrides through `population_desc()` so MuJoCo or builder defaults remain effective. Explicit Newton values, including zero, retain their precedence.
+- Preserve tetrahedral boundary faces during example population so OVRTX renders the deformable volume.
+- Match Newton's USD importer for cloth stretch/bend stiffness and default triangle damping, without extra thickness scaling. Retune the example asset to preserve its previous effective material values.
+- Preserve authored empty strings when resolving OVStage tokens, so an empty physics axis is rejected instead of using a default.
+- Reject non-contiguous or non-`float32` joint state, control and DOF-property arrays instead of misreading them.
+
 ## [0.2.1] - 2026-10-22
 
 ### Upgrading from 0.2.0

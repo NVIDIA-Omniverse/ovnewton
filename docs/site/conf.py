@@ -27,6 +27,7 @@ if docs_commit is None:
 extensions = [
     "myst_parser",
     "sphinx.ext.autodoc",
+    "sphinx.ext.doctest",
     "sphinx.ext.napoleon",
     "sphinx_copybutton",
 ]
@@ -43,6 +44,12 @@ myst_substitutions = {
 html_theme = "nvidia_sphinx_theme"
 html_theme_options = {
     "collapse_navigation": False,
+    "switcher": {
+        "json_url": "../versions.json",
+        "version_match": "latest" if "dev" in release else release,
+    },
+    # The deployment job generates this index after all version directories exist.
+    "check_switcher": False,
     "github_url": "https://github.com/NVIDIA-Omniverse/ovnewton",
     "icon_links": [
         {
@@ -55,3 +62,10 @@ html_theme_options = {
 }
 
 exclude_patterns = ["_build"]
+
+# Match Newton's doctest setup: suppress device/compiler chatter, not failures.
+doctest_global_setup = """
+import warp as wp
+wp.config.log_level = wp.LOG_WARNING
+wp.init()
+"""

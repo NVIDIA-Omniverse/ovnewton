@@ -123,6 +123,12 @@ def create_parser() -> argparse.ArgumentParser:
         default="xpbd",
         help="Newton solver used to advance the scene",
     )
+    parser.add_argument(
+        "--cuda-graph",
+        choices=("true", "false"),
+        default="true",
+        help="Replay physics with a CUDA graph; CPU simulation uses the direct loop",
+    )
     parser.add_argument("--num-frames", type=int, default=120, help="Frames rendered in headless mode")
     parser.add_argument("--output-dir", default="output", help="Directory used in headless mode")
     parser.add_argument("--headless", action="store_true", help="Skip the viewer and save PNG frames")

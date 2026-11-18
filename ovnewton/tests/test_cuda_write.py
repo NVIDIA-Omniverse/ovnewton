@@ -39,14 +39,12 @@ _DEG_PER_RAD = 57.29577951308232
 CARTPOLE = get_asset("scene_cartpole.usda")
 
 
-class _ReadGroup:
-    def __init__(self, tensor, *, row=0, cuda_stream=0, wait_event=0):
-        self.attribute = 1
+class _ReadColumn:
+    def __init__(self, tensor, *, cuda_stream=0, wait_event=0):
+        self.attribute = ovstage.Token(1)
         self.ordinal = 1
         self.is_delete = False
         self.tensor_count = 1
-        self.prim_count = 1
-        self._row = row
         self._tensor = tensor
         self.raw = SimpleNamespace(
             data=SimpleNamespace(cuda_sync=SimpleNamespace(stream=cuda_stream, wait_event=wait_event))
@@ -57,13 +55,20 @@ class _ReadGroup:
         assert index == 0
         return self._tensor
 
-    def prim_index(self, index):
-        assert index == 0
-        return self._row
-
     def data_row_index(self, index):
         assert index == 0
         return 0
+
+
+class _ReadGroup:
+    def __init__(self, tensor, *, row=0, cuda_stream=0, wait_event=0):
+        self.prim_count = 1
+        self._row = row
+        self.columns = (_ReadColumn(tensor, cuda_stream=cuda_stream, wait_event=wait_event),)
+
+    def prim_index(self, index):
+        assert index == 0
+        return self._row
 
 
 class _Read:
@@ -90,7 +95,7 @@ class _ReadStage:
         self.reads = 0
 
     def read_attributes(self, _query, attributes, _ordinal_range):
-        assert tuple(attributes) == (1,)
+        assert tuple(attributes) == (ovstage.Token(1),)
         self.reads += 1
         return _Read(self.group)
 
@@ -104,7 +109,7 @@ class _Runtime:
         self.paths = tuple(f"/{index}" for index in range(path_count))
 
     def token(self, _pd, _attribute):
-        return 1
+        return ovstage.Token(1)
 
     def indices(self, values):
         return wp.array(values, dtype=wp.int32, device=self.device)
@@ -278,6 +283,7 @@ def test_body_publication_kernel_matches_cpu_encoders(device):
             bq_wp,
             bqd_wp,
             scale_wp,
+            wp.array(np.arange(n), dtype=wp.int32, device=device),
             pose_out,
             linear_out,
             angular_out,
@@ -519,7 +525,7 @@ def test_runtime_ingress_rejects_graph_capture_before_read(monkeypatch):
 
 
 def test_runtime_ingress_handles_backend_device_on_cuda(monkeypatch):
-    from ovstage import PopulationDomain, population
+    from ovstage import population
 
     observed = []
     original_tensor_view = _runtime._tensor_source_view
@@ -536,7 +542,10 @@ def test_runtime_ingress_handles_backend_device_on_cuda(monkeypatch):
 
     monkeypatch.setattr(_runtime, "_tensor_source_view", tracked_tensor_view)
     with ovstage.Stage("ovstage-cuda-runtime-ingress") as stage:
-        population.open_usd(stage, CARTPOLE, ordinal=1, domains=PopulationDomain.ALL)
+        population.open_usd_with_desc(
+            stage, CARTPOLE, ordinal=1, time=population.DEFAULT_TIME,
+            descs=(ovnewton.population_desc(),),
+        )
         stage.advance_write_floor(ordinal=1).wait()
         binding = ovnewton.attach_ovstage(stage)
         assert binding.model.device.is_cuda
@@ -557,10 +566,13 @@ def test_runtime_writer_device_resident_path():
     (model.device.is_cuda and the fresh state's body_q on a CUDA device), runs a
     full pose+velocity write, and reads back — confirming the device DLTensor
     path produces values that round-trip through Fabric correctly."""
-    from ovstage import PopulationDomain, population
+    from ovstage import population
 
     with ovstage.Stage("ovstage-device-resident-path") as stage, ovstage.PathDictionary(stage) as pd:
-        population.open_usd(stage, CARTPOLE, ordinal=1, domains=PopulationDomain.ALL)
+        population.open_usd_with_desc(
+            stage, CARTPOLE, ordinal=1, time=population.DEFAULT_TIME,
+            descs=(ovnewton.population_desc(),),
+        )
         stage.advance_write_floor(ordinal=1).wait()
         model = _build.build_model(stage, pd, ordinal=1)
         body_paths = model.body_label

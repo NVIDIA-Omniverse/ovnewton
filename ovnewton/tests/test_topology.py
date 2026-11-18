@@ -40,7 +40,10 @@ def Cube "BodyY" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsCollision
 
 def test_cartpole_topology_from_ovstage():
     with ovstage.Stage("ovnewton-topology") as stage, ovstage.PathDictionary(stage) as pd:
-        population.open_usd(stage, CARTPOLE, ordinal=1, domains=PopulationDomain.ALL)
+        population.open_usd_with_desc(
+            stage, CARTPOLE, ordinal=1, time=population.DEFAULT_TIME,
+            descs=(ovnewton.population_desc(),),
+        )
         stage.advance_write_floor(ordinal=1).wait()
 
         hierarchy = _parse.read_hierarchy(stage, pd, ordinal=1)
@@ -67,7 +70,10 @@ def test_cartpole_topology_from_ovstage():
 
 def test_query_paths_uses_readable_usd_path():
     with ovstage.Stage("ovnewton-query-paths") as stage, ovstage.PathDictionary(stage) as pd:
-        population.open_usd_from_string(stage, COLLISION_GROUPS, ordinal=1, domains=PopulationDomain.ALL)
+        population.open_usd_from_string_with_desc(
+            stage, COLLISION_GROUPS, ordinal=1, time=population.DEFAULT_TIME,
+            descs=(ovnewton.population_desc(),),
+        )
         stage.advance_write_floor(ordinal=1).wait()
 
         with stage.query(
@@ -80,7 +86,7 @@ def test_query_paths_uses_readable_usd_path():
     assert paths == ["/GroupA", "/GroupB"]
 
 
-@pytest.mark.parametrize("domains", [PopulationDomain.ALL, PopulationDomain.PHYSICS])
+@pytest.mark.parametrize("domains", [PopulationDomain.RENDERING, PopulationDomain.NONE])
 def test_readable_parent_builds_authoritative_hierarchy(domains):
     usda = """#usda 1.0
 def Xform "Body" (prepend apiSchemas = ["PhysicsRigidBodyAPI"]) {
@@ -89,7 +95,10 @@ def Xform "Body" (prepend apiSchemas = ["PhysicsRigidBodyAPI"]) {
 def Xform "BodyExtra" (prepend apiSchemas = ["PhysicsRigidBodyAPI"]) {}
 """
     with ovstage.Stage("ovnewton-readable-parent") as stage, ovstage.PathDictionary(stage) as pd:
-        population.open_usd_from_string(stage, usda, ordinal=1, domains=domains)
+        population.open_usd_from_string_with_desc(
+            stage, usda, ordinal=1, time=population.DEFAULT_TIME,
+            descs=(population.Desc(domains=domains), ovnewton.population_desc()),
+        )
         stage.advance_write_floor(ordinal=1).wait()
         hierarchy = _parse.read_hierarchy(stage, pd, ordinal=1)
 
@@ -127,7 +136,10 @@ def test_incomplete_hierarchy_fails_when_consumed():
 
 def test_readable_prim_type_groups_materialized_paths():
     with ovstage.Stage("ovnewton-readable-prim-type") as stage, ovstage.PathDictionary(stage) as pd:
-        population.open_usd_from_string(stage, COLLISION_GROUPS, ordinal=1, domains=PopulationDomain.ALL)
+        population.open_usd_from_string_with_desc(
+            stage, COLLISION_GROUPS, ordinal=1, time=population.DEFAULT_TIME,
+            descs=(ovnewton.population_desc(),),
+        )
         stage.advance_write_floor(ordinal=1).wait()
         paths_by_type = _parse._paths_by_prim_type(stage, pd, ["/GroupA", "/BodyX"], ordinal=1)
 
@@ -140,7 +152,10 @@ def "Untyped" (prepend apiSchemas = ["PhysicsRigidBodyAPI"]) {}
 def Xform "Typed" (prepend apiSchemas = ["PhysicsRigidBodyAPI"]) {}
 '''
     with ovstage.Stage("ovnewton-untyped-path") as stage, ovstage.PathDictionary(stage) as pd:
-        population.open_usd_from_string(stage, usda, ordinal=1, domains=PopulationDomain.ALL)
+        population.open_usd_from_string_with_desc(
+            stage, usda, ordinal=1, time=population.DEFAULT_TIME,
+            descs=(ovnewton.population_desc(),),
+        )
         stage.advance_write_floor(ordinal=1).wait()
         paths = _parse._filtered_paths(
             stage,
@@ -158,7 +173,10 @@ def Sphere "ASphere" (prepend apiSchemas = ["NewtonSiteAPI"]) {}
 def Cube "ZCube" (prepend apiSchemas = ["NewtonSiteAPI"]) {}
 '''
     with ovstage.Stage("ovnewton-site-order") as stage, ovstage.PathDictionary(stage) as pd:
-        population.open_usd_from_string(stage, usda, ordinal=1, domains=PopulationDomain.ALL)
+        population.open_usd_from_string_with_desc(
+            stage, usda, ordinal=1, time=population.DEFAULT_TIME,
+            descs=(ovnewton.population_desc(),),
+        )
         stage.advance_write_floor(ordinal=1).wait()
         sites = _parse.read_sites(stage, pd, ordinal=1)
 
@@ -170,7 +188,10 @@ def Cube "ZCube" (prepend apiSchemas = ["NewtonSiteAPI"]) {}
 
 def test_model_import_batches_initial_columns():
     with ovstage.Stage("ovnewton-import-batches") as stage, ovstage.PathDictionary(stage) as pd:
-        population.open_usd(stage, CARTPOLE, ordinal=1, domains=PopulationDomain.ALL)
+        population.open_usd_with_desc(
+            stage, CARTPOLE, ordinal=1, time=population.DEFAULT_TIME,
+            descs=(ovnewton.population_desc(),),
+        )
         stage.advance_write_floor(ordinal=1).wait()
 
         batches = []
@@ -223,12 +244,11 @@ def test_fixed_read_rejects_wrong_row_count_instead_of_defaulting(shape):
         def wait(self):
             return None
 
-    class Group:
-        attribute = 1
+    class Column:
+        attribute = ovstage.Token(1)
         ordinal = 1
         is_delete = False
         tensor_count = 1
-        prim_count = 2
         has_data_index_map = False
 
         def array(self, _index):
@@ -236,6 +256,16 @@ def test_fixed_read_rejects_wrong_row_count_instead_of_defaulting(shape):
 
         def data_row_index(self, local):
             return local
+
+    class Group:
+        prim_count = 2
+        columns = (Column(),)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
 
         def prim_index(self, local):
             return local
@@ -247,9 +277,8 @@ def test_fixed_read_rejects_wrong_row_count_instead_of_defaulting(shape):
         def wait(self):
             return None
 
-        def fetch_next(self):
-            group, self.group = self.group, None
-            return group
+        def groups(self):
+            yield self.group
 
         def release(self):
             return Operation()
@@ -269,7 +298,7 @@ def test_fixed_read_rejects_wrong_row_count_instead_of_defaulting(shape):
 
     class PathDictionary:
         def intern_token(self, _attribute):
-            return 1
+            return ovstage.Token(1)
 
     with pytest.raises(OvstageContractError, match=f"{shape[0]} rows for 2 prims"):
         _stage.read_fixed(Stage(), PathDictionary(), object(), "test:column", ordinal=1)
@@ -277,17 +306,26 @@ def test_fixed_read_rejects_wrong_row_count_instead_of_defaulting(shape):
 
 @pytest.mark.parametrize("is_delete,tensor_count", [(True, 1), (False, 0)], ids=["deleted", "empty"])
 def test_path_reads_advance_after_empty_groups(is_delete, tensor_count):
+    class ScopedGroup(SimpleNamespace):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            release_group(self)
+
     def group(*, is_delete=False, tensor_count=1):
-        return SimpleNamespace(
-            attribute=1,
-            ordinal=1,
-            is_delete=is_delete,
-            tensor_count=tensor_count,
+        return ScopedGroup(
+            columns=(SimpleNamespace(
+                attribute=ovstage.Token(1),
+                ordinal=1,
+                is_delete=is_delete,
+                tensor_count=tensor_count,
+                has_data_index_map=False,
+                array=lambda _index: np.array([[42]], dtype=np.uint64),
+                data_row_index=lambda local: local,
+            ),),
             prim_count=1,
             prim_list=object(),
-            has_data_index_map=False,
-            array=lambda _index: np.array([[42]], dtype=np.uint64),
-            data_row_index=lambda local: local,
             prim_index=lambda local: local,
         )
 
@@ -299,10 +337,10 @@ def test_path_reads_advance_after_empty_groups(is_delete, tensor_count):
         # Fail on duplicate release instead of hanging on the same group.
         assert value is next(remaining)
 
-    read = SimpleNamespace(wait=lambda: None, fetch_next=iter((skipped, valid, None)).__next__)
+    read = SimpleNamespace(wait=lambda: None, groups=lambda: iter((skipped, valid)))
     stage = SimpleNamespace(read_attributes=lambda *_args: nullcontext(read), release_group=release_group)
     pd = SimpleNamespace(
-        intern_token=lambda _attr: 1,
+        intern_token=lambda _attr: ovstage.Token(1),
         get_path_strings=lambda _paths: ["/Body"],
         path_to_string=lambda _path: "/Body",
     )

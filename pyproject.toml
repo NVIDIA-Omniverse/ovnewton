@@ -3,7 +3,7 @@
 
 [project]
 name = "ovnewton"
-version = "0.2.1"
+version = "0.3.0"
 description = "Connect the Newton physics engine to ovstage / the Omniverse library ecosystem."
 readme = "README.md"
 license = "Apache-2.0"
@@ -11,9 +11,10 @@ license-files = ["LICENSE.md", "THIRD_PARTY_NOTICES.md"]
 authors = [{ name = "NVIDIA CORPORATION & AFFILIATES" }]
 requires-python = ">=3.11,<3.15"
 dependencies = [
-    "ovstage==0.3.0.1791986420",
-    "newton>=1.7.0",
-    "newton-usd-schemas>=0.5.0,<0.6",
+    "ovstage==0.4.0.1794520352",
+    # Shared by development and built wheels: a published version or a pinned source archive.
+    "newton>=1.8.0",
+    "newton-usd-schemas>=0.5.0,<0.7",
     "physx-usd-schemas>=25.11.1,<26",
     "warp-lang>=1.17.0",
     "numpy>=1.26.0; python_version < '3.13'",
@@ -39,11 +40,11 @@ dev = [
     "ruff>=0.15",
 ]
 assets-audit = [
-    "GitPython>=3.2.0",
+    "GitPython>=3.2.1",
 ]
 examples = [
     "newton[sim]>=1.7.0",
-    "ovrtx>=0.6.0.1791947691,<0.7",
+    "ovrtx>=0.7.0.1794596436,<0.8",
     "pillow>=13.0.0",
     "pyglet>=2.1",
 ]
@@ -52,9 +53,15 @@ examples = [
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+# Permit source pins as well as published versions in the dependency setting above.
+[tool.hatch.metadata]
+allow-direct-references = true
+
 [tool.hatch.build.targets.sdist]
 only-include = [
+    "conftest.py",
     "ovnewton/__init__.py",
+    "ovnewton/attributes.py",
     "ovnewton/_build_info.py",
     "ovnewton/_version.py",
     "ovnewton/py.typed",
@@ -63,7 +70,9 @@ only-include = [
     "ovnewton/examples/assets/README.md",
     "ovnewton/examples/assets/scene_cartpole.usda",
     "ovnewton/examples/assets/scene_rigid_bodies.usda",
+    "ovnewton/examples/assets/scene_deformables.usda",
     "ovnewton/examples/example_ovnewton_basic.py",
+    "ovnewton/examples/example_ovnewton_deformables.py",
     "ovnewton/examples/example_ovnewton_robot.py",
     "ovnewton/examples/utils",
     "ovnewton/tests/__init__.py",
@@ -72,17 +81,25 @@ only-include = [
     "ovnewton/tests/newton_assets_diff.py",
     "ovnewton/tests/run.sh",
     "ovnewton/tests/runtime_helpers.py",
+    "ovnewton/tests/deformable_helpers.py",
     "ovnewton/tests/test_add_ovstage.py",
     "ovnewton/tests/test_byo.py",
     "ovnewton/tests/test_cuda_write.py",
     "ovnewton/tests/test_deformable_inputs.py",
+    "ovnewton/tests/test_curve_import.py",
+    "ovnewton/tests/test_surface_import.py",
+    "ovnewton/tests/test_volume_import.py",
     "ovnewton/tests/test_diff.py",
     "ovnewton/tests/test_diff_harness_selfcheck.py",
     "ovnewton/tests/test_mjc_equalities.py",
     "ovnewton/tests/test_mjc_joints.py",
+    "ovnewton/tests/test_mjc_actuators.py",
     "ovnewton/tests/test_newton_assets_diff.py",
     "ovnewton/tests/test_output_read.py",
+    "ovnewton/tests/test_direct_writes.py",
     "ovnewton/tests/test_population_contract.py",
+    "ovnewton/tests/test_read_field_contract.py",
+    "ovnewton/tests/test_read_field_declarations.py",
     "ovnewton/tests/test_runtime.py",
     "ovnewton/tests/test_schema_registration.py",
     "ovnewton/tests/test_schema_names.py",
@@ -90,6 +107,8 @@ only-include = [
     "ovnewton/tests/test_topology.py",
     "ovnewton/tests/test_write.py",
     "ovnewton/tests/typecheck_public_api.py",
+    "contracts/read_fields.json",
+    "tools/generate_read_fields.py",
     "docs/site",
     "skills/using-ovnewton",
     "skills/physical-ai-physics-selection",
@@ -104,15 +123,18 @@ only-include = [
 [tool.hatch.build.targets.wheel]
 only-include = [
     "ovnewton/__init__.py",
+    "ovnewton/attributes.py",
     "ovnewton/py.typed",
     "ovnewton/_src",
     "ovnewton/_build_info.py",
     "ovnewton/_version.py",
     "ovnewton/examples/__init__.py",
     "ovnewton/examples/example_ovnewton_basic.py",
+    "ovnewton/examples/example_ovnewton_deformables.py",
     "ovnewton/examples/example_ovnewton_robot.py",
     "ovnewton/examples/assets/README.md",
     "ovnewton/examples/assets/scene_rigid_bodies.usda",
+    "ovnewton/examples/assets/scene_deformables.usda",
     "ovnewton/examples/assets/scene_cartpole.usda",
     "ovnewton/examples/utils/__init__.py",
     "ovnewton/examples/utils/transform_relay.py",
@@ -120,18 +142,30 @@ only-include = [
 ]
 
 [dependency-groups]
-assets-audit = ["GitPython>=3.2.0"]
+sim = ["newton[sim]>=1.7.0"]
+assets-audit = ["GitPython>=3.2.1"]
 dev = ["basedpyright>=1.39.9", "newton[importers]>=1.7.0", "pytest>=8", "ruff>=0.15"]
 docs = [
     "sphinx>=7.4",
     "myst-parser>=3.0",
     "nvidia-sphinx-theme>=0.0.7",
     "sphinx-copybutton>=0.5",
+    # Security floor for the documentation theme's CSS selector parser.
+    "soupsieve>=4.0",
 ]
 
 # Keep uv management explicit for dependency discovery.
 [tool.uv]
 managed = true
+
+[tool.uv.dependency-groups]
+# Patched Soup Sieve requires Python 3.11.5; runtime support is unchanged.
+docs = {requires-python = ">=3.11.5"}
+
+[tool.pytest.ini_options]
+markers = [
+    "render: requires the RTX renderer and runs in the dedicated rendering CI job",
+]
 
 [tool.ruff]
 line-length = 120

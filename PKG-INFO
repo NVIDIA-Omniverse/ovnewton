@@ -1,6 +1,6 @@
 Metadata-Version: 2.5
 Name: ovnewton
-Version: 0.2.1
+Version: 0.3.0
 Summary: Connect the Newton physics engine to ovstage / the Omniverse library ecosystem.
 Project-URL: Repository, https://github.com/NVIDIA-Omniverse/ovnewton
 Project-URL: Documentation, https://nvidia-omniverse.github.io/ovnewton/
@@ -12,26 +12,26 @@ License-File: THIRD_PARTY_NOTICES.md
 Requires-Python: <3.15,>=3.11
 Requires-Dist: coacd>=1.0.7
 Requires-Dist: fast-simplification>=0.1.13
-Requires-Dist: newton-usd-schemas<0.6,>=0.5.0
-Requires-Dist: newton>=1.7.0
+Requires-Dist: newton-usd-schemas<0.7,>=0.5.0
+Requires-Dist: newton>=1.8.0
 Requires-Dist: numpy>=1.26.0; python_version < '3.13'
 Requires-Dist: numpy>=2.1.0; python_version == '3.13'
 Requires-Dist: numpy>=2.3.2; python_version >= '3.14'
-Requires-Dist: ovstage==0.3.0.1791986420
+Requires-Dist: ovstage==0.4.0.1794520352
 Requires-Dist: physx-usd-schemas<26,>=25.11.1
 Requires-Dist: scipy>=1.11.2; python_version < '3.13'
 Requires-Dist: scipy>=1.14.1; python_version == '3.13'
 Requires-Dist: scipy>=1.16.1; python_version >= '3.14'
 Requires-Dist: warp-lang>=1.17.0
 Provides-Extra: assets-audit
-Requires-Dist: gitpython>=3.2.0; extra == 'assets-audit'
+Requires-Dist: gitpython>=3.2.1; extra == 'assets-audit'
 Provides-Extra: dev
 Requires-Dist: newton[importers]>=1.7.0; extra == 'dev'
 Requires-Dist: pytest>=8; extra == 'dev'
 Requires-Dist: ruff>=0.15; extra == 'dev'
 Provides-Extra: examples
 Requires-Dist: newton[sim]>=1.7.0; extra == 'examples'
-Requires-Dist: ovrtx<0.7,>=0.6.0.1791947691; extra == 'examples'
+Requires-Dist: ovrtx<0.8,>=0.7.0.1794596436; extra == 'examples'
 Requires-Dist: pillow>=13.0.0; extra == 'examples'
 Requires-Dist: pyglet>=2.1; extra == 'examples'
 Description-Content-Type: text/markdown
@@ -94,6 +94,11 @@ The example loads the `scene_rigid_bodies.usda` scene included in the ovnewton w
 pip install "ovnewton[examples]"
 python -m ovnewton.examples.example_ovnewton_basic
 ```
+
+In the live viewer, left-drag to look around and use WASD to move the camera.
+Right-drag a rigid body or robot link to pull it with a spring force; release the
+button to let go. Picking uses Newton’s public `Picking` helper and also works
+with CUDA graphs. Cloth particles are not pickable.
 
 The same example can build the scene through ovnewton and advance it with the
 MuJoCo-Warp or VBD backend on CUDA or CPU:
@@ -178,7 +183,7 @@ See the [getting-started guide](https://github.com/NVIDIA-Omniverse/ovnewton/blo
 
 `ovnewton` supports rigid bodies, articulations, primitive and mesh colliders, physics materials, collision filtering, and a limited subset of surface-cloth inputs. Applications can synchronize state with ovstage and read selected Newton outputs on CPU or CUDA.
 
-Physics instancing, Newton actuators, cables and volume deformables are not supported. Joint-state updates, material bindings and cloth inputs have additional restrictions; see the [support guide](https://github.com/NVIDIA-Omniverse/ovnewton/blob/main/docs/site/support.md) for the full list.
+Physics instancing and Newton actuators are not supported. Canonical cables and tetrahedral volumes have limited support; see the [deformable guide](https://github.com/NVIDIA-Omniverse/ovnewton/blob/main/docs/site/deformables.md) for the supported inputs and a runnable example. Joint-state updates, material bindings and cloth inputs have additional restrictions; see the [support guide](https://github.com/NVIDIA-Omniverse/ovnewton/blob/main/docs/site/support.md) for the full list.
 
 Malformed data and unsupported physics that would materially change the model raise an error. Recoverable import decisions use the standard `ovnewton` Python logger; see the [concepts guide](https://github.com/NVIDIA-Omniverse/ovnewton/blob/main/docs/site/concepts.md#diagnostics-and-observability) for details.
 

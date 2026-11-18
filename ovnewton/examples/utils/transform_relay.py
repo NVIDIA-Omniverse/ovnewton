@@ -75,9 +75,10 @@ class TransformRelay:
             read.wait()
             for group in read.groups():
                 with group:
-                    rows = np.from_dlpack(group.dlpack(0)).reshape(-1, 4, 4)
-                    for local in range(group.prim_count):
-                        out[group.prim_index(local)] = rows[group.data_row_index(local)]
+                    for column in group.columns:
+                        rows = np.from_dlpack(column.dlpack(0)).reshape(-1, 4, 4)
+                        for local in range(group.prim_count):
+                            out[group.prim_index(local)] = rows[column.data_row_index(local)]
         return out
 
     def write(self, matrices, ordinal):

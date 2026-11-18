@@ -3,6 +3,8 @@
 
 """The model-diff must catch what the old position-only summary missed — body
 ORIENTATION and full inertia."""
+import subprocess
+
 import newton
 import numpy as np
 import pytest
@@ -19,6 +21,13 @@ print("PICKLE64 " + base64.b64encode(pickle.dumps(os.environ["PXR_WORK_THREAD_LI
 """
     )
     assert result == "1"
+
+
+def test_reference_subprocess_timeout():
+    with pytest.raises(subprocess.TimeoutExpired) as error:
+        dh._run_reference("import time; print('reference started', flush=True); time.sleep(10)", timeout=1)
+    assert error.value.timeout == 1
+    assert b"reference started" in error.value.stdout
 
 
 def _arrs(pos, quat, inertia_diag):

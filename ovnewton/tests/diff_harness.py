@@ -100,6 +100,50 @@ def _model_arrays(model):
     grav = getattr(model, "gravity", None)
     if grav is not None and hasattr(grav, "numpy"):
         out["gravity"] = np.asarray(grav.numpy())
+    out["mjc_actuators"] = {}
+    mjc = getattr(model, "mujoco", None)
+    labels = getattr(mjc, "actuator_label", ())
+    if labels:
+        arrays = {
+            name: getattr(mjc, name).numpy() for name in (
+                "ctrl_source", "ctrl_type", "actuator_dyntype", "actuator_gaintype", "actuator_biastype",
+                "actuator_actdim",
+                "actuator_gainprm", "actuator_biasprm", "actuator_gear", "actuator_ctrlrange",
+                "actuator_ctrllimited", "actuator_has_ctrlrange", "actuator_forcerange",
+                "actuator_forcelimited", "actuator_has_forcerange",
+            )
+        }
+        from newton.solvers import SolverMuJoCo
+
+        transmissions = mjc.actuator_trnid.numpy()
+        transmission_types = mjc.actuator_trntype.numpy()
+        starts = out["joint_qd_start"]
+        dof_bindings = {
+            dof: (str(label), dof - int(first))
+            for label, first, last in zip(out["joint_label"], starts[:-1], starts[1:], strict=True)
+            for dof in range(int(first), int(last))
+        }
+        for row, label in enumerate(labels):
+            target = mjc.actuator_target_label[row]
+            transmission_type = int(transmission_types[row])
+            if transmission_type in (SolverMuJoCo.TrnType.JOINT, SolverMuJoCo.TrnType.JOINT_IN_PARENT):
+                dof = int(transmissions[row, 0])
+                # Newton resolves direct USD actuators by label when their DOF is negative.
+                if (
+                    dof < 0
+                    and arrays["ctrl_source"][row] == SolverMuJoCo.CtrlSource.CTRL_DIRECT
+                    and target in mjc.joint_dof_label
+                ):
+                    dof = mjc.joint_dof_label.index(target)
+                binding = (transmission_type, *dof_bindings.get(dof, ("invalid joint DOF", dof)))
+            else:
+                # Other transmission types are outside the scalar importer contract.
+                binding = (transmission_type, target, tuple(int(value) for value in transmissions[row]))
+            out["mjc_actuators"][label] = {
+                "target": target,
+                "binding": binding,
+                **{name: np.asarray(values[row]) for name, values in arrays.items()},
+            }
     return out
 
 
@@ -367,6 +411,22 @@ def compare_models(
         and not np.allclose(ref["gravity"], ours["gravity"], atol=atol, rtol=rtol)
     ):
         mm.append("gravity: ref %s vs ours %s" % (ref["gravity"], ours["gravity"]))
+    if check_joints:
+        reference_actuators = ref.get("mjc_actuators", {})
+        actual_actuators = ours.get("mjc_actuators", {})
+        if set(reference_actuators) != set(actual_actuators):
+            mm.append("MuJoCo actuator labels differ: ref %s vs ours %s" %
+                      (sorted(reference_actuators), sorted(actual_actuators)))
+        for label in reference_actuators.keys() & actual_actuators.keys():
+            expected, actual = reference_actuators[label], actual_actuators[label]
+            for field, value in expected.items():
+                other = actual.get(field)
+                equal = value == other if field in ("target", "binding") else (
+                    other is not None and np.shape(value) == np.shape(other)
+                    and np.allclose(value, other, atol=atol, rtol=rtol)
+                )
+                if not equal:
+                    mm.append("%s.%s: ref %s vs ours %s" % (label, field, value, other))
     return mm
 
 
@@ -388,12 +448,13 @@ def _step_model(model, n, *, state=None):
     return s0.body_q.numpy()  # (B,7): px,py,pz, qx,qy,qz,qw
 
 
-def _run_reference(src, *args):
+def _run_reference(src, *args, timeout=180):
     """Run a reference snippet (which uses add_usd) in an isolated subprocess —
     the ovstage-built USD kept off LD_LIBRARY_PATH so the selected OpenUSD
     provider loads cleanly, and PYTHONPATH set so the child can ``import
     diff_harness`` — returning its ``PICKLE64 ``-prefixed payload, unpickled.
-    Shared by reference_poses/reference_model."""
+    Shared by reference_poses/reference_model. A stalled child is killed after
+    ``timeout`` seconds and raises ``subprocess.TimeoutExpired``."""
     env = dict(os.environ)
     for k in ("OVSTAGE_LIBRARY_PATH", "OVPOPULATION_LIBRARY_PATH", "OVHIERARCHY_LIBRARY_PATH"):
         env.pop(k, None)
@@ -404,7 +465,13 @@ def _run_reference(src, *args):
     if newton_source:
         python_paths.insert(0, newton_source)
     env["PYTHONPATH"] = os.pathsep.join(python_paths)
-    proc = subprocess.run([sys.executable, "-c", src, *(str(a) for a in args)], capture_output=True, text=True, env=env)
+    proc = subprocess.run(
+        [sys.executable, "-c", src, *(str(a) for a in args)],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=timeout,
+    )
     line = next((l for l in proc.stdout.splitlines() if l.startswith("PICKLE64 ")), None)
     if proc.returncode != 0 or line is None:
         raise AssertionError(
@@ -494,11 +561,14 @@ _MODEL_REF_SRC = r"""
 import sys, base64, json, pickle
 import newton
 from diff_harness import _model_arrays
-from newton.usd import SchemaResolverNewton, SchemaResolverPhysx
+from newton.usd import SchemaResolverNewton, SchemaResolverPhysx, SchemaResolverMjc
 b = newton.ModelBuilder()
 resolvers = [SchemaResolverNewton()]
 if sys.argv[3] == "1":
     resolvers.append(SchemaResolverPhysx())
+if sys.argv[4] == "1":
+    newton.solvers.SolverMuJoCo.register_custom_attributes(b)
+    resolvers.append(SchemaResolverMjc())
 options = json.loads(sys.argv[2])
 b.add_usd(
     sys.argv[1],
@@ -511,7 +581,7 @@ print("PICKLE64 " + base64.b64encode(pickle.dumps(_model_arrays(m))).decode())
 """
 
 
-def reference_model(asset, *, include_physx_resolver=False, **add_usd_options):
+def reference_model(asset, *, include_physx_resolver=False, include_mjc_resolver=False, **add_usd_options):
     """Build ``asset`` via ``add_usd`` in an isolated subprocess and return its
     :func:`_model_arrays` dump. The physics-only profile excludes visual-only
     geometry. Focused ``JointStateAPI`` tests opt into Newton's PhysX resolver
@@ -519,4 +589,6 @@ def reference_model(asset, *, include_physx_resolver=False, **add_usd_options):
     if "schema_resolvers" in add_usd_options:
         raise ValueError("use include_physx_resolver to select the reference schema resolvers")
     options = {**ADD_USD_PHYSICS_PROFILE, **add_usd_options}
-    return _run_reference(_MODEL_REF_SRC, asset, json.dumps(options), int(include_physx_resolver))
+    return _run_reference(
+        _MODEL_REF_SRC, asset, json.dumps(options), int(include_physx_resolver), int(include_mjc_resolver)
+    )

@@ -250,7 +250,10 @@ def Xform "World" (
 
 
 def _populate(stage, usda):
-    population.open_usd_from_string(stage, usda, ordinal=1, domains=PopulationDomain.ALL)
+    population.open_usd_from_string_with_desc(
+        stage, usda, ordinal=1, time=population.DEFAULT_TIME,
+        descs=(population.Desc(domains=PopulationDomain.RENDERING), ovnewton.population_desc()),
+    )
     stage.advance_write_floor(ordinal=1).wait()
 
 
@@ -860,13 +863,13 @@ def test_deferred_runtime_layout_rolls_back_and_reuses_storage(monkeypatch):
         capture_group_slice = _runtime._capture_group_slice
         captures = 0
 
-        def fail_second_capture(column, group, runtime):
+        def fail_second_capture(column, group, payload, runtime):
             nonlocal captures
             if column.deferred:
                 captures += 1
                 if captures == 2:
                     raise RuntimeError("injected deferred-layout failure")
-            return capture_group_slice(column, group, runtime)
+            return capture_group_slice(column, group, payload, runtime)
 
         monkeypatch.setattr(_runtime, "_capture_group_slice", fail_second_capture)
         with pytest.raises(RuntimeError, match="injected deferred-layout failure"):
@@ -1401,7 +1404,7 @@ def test_runtime_ingress_path_selection_lifetime(ingress_device, attributes):
         binding = ovnewton.attach_ovstage(stage)
         state, control = binding.model.state(), binding.model.control()
         path_dictionary = binding._pd
-        path_list = int(binding._runtime.read_path_list)
+        path_list = binding._runtime.read_path_list
         paths = list(binding._runtime.paths)
         for _ in range(2):
             binding.update_from_ovstage(state, control, attributes=attributes)

@@ -42,8 +42,11 @@ Disabled equalities are omitted, matching Newton's default USD import policy.
 
 The importer creates a ball/fixed loop joint and preserves the authoritative
 MuJoCo equality row, including solver reference/impedance, weld relative pose,
-and torque scale. Use `SolverMuJoCo` for these complete semantics. Other solvers
-only see the projected loop joint, subject to their own loop-closure support;
+and torque scale. Following Newton 1.8.0rc2, a weld's loop-joint frames retain
+the authored relative pose. A weld with zero torque scale projects to a ball
+joint so rotation remains free. Use `SolverMuJoCo` for the complete equality
+semantics. Other solvers only see the projected loop joint, subject to their own
+loop-closure support;
 successful import does not guarantee equivalent dynamics with another solver.
 As with other orphan joints, finalize a caller-owned builder using
 `skip_validation_joints=import_result.has_orphan_joints`.
@@ -102,16 +105,30 @@ into Newton's reference-relative coordinates, matching its USD importer.
 Native D6 joints have no equivalent reference-coordinate semantics and reject
 these two properties.
 
-Explicit non-default Newton joint parameters take precedence over MuJoCo values.
-When both APIs are applied and a zero Newton value could be either authored or
-a schema fallback that conflicts with MuJoCo, import fails instead of guessing.
-With registered MuJoCo solver fields, Newton's `-inf` limit defaults have the
-same ambiguity: an authored sentinel selects force-space gains, while a schema
-fallback permits MJCF defaults. Use one parameter namespace, explicit finite
-Newton limit gains, or `mjc:solreflimit` to resolve that case.
+Joint parameters follow Newton 1.8's default resolver order. With
+`population_desc()`, missing Newton armature, damping, friction and limit-gain
+properties retain MuJoCo or builder defaults. Explicit Newton values, including
+zero, take precedence over MuJoCo dynamics. An authored `-inf` limit gain selects
+Newton's force-space defaults; absent gains permit MuJoCo defaults unless the
+builder supplies custom limit gains. Explicit `mjc:solreflimit` selects the raw
+MuJoCo limit settings.
+
+The current OVStage wheel does not expose authored-value provenance. Empty
+property declarations still inherit schema fallbacks, and another population
+descriptor selecting the same properties can restore the excluded defaults.
+Use omitted properties for fallback, and combine this descriptor with rendering
+selectors that leave these joint parameters to `population_desc()`. Full parity
+for empty declarations and overlapping selectors needs OVStage support.
+
 Changing these settings after import requires rebuilding the model.
-Actuator-force ranges (`mjc:actuatorfrcrange`, `mjc:actuatorfrclimited`) and
-`mjc:springdamper` are not imported yet and raise an error if authored.
+Joint actuator-force ranges (`mjc:actuatorfrcrange:min/max`) follow
+`mjc:actuatorfrclimited`: `true` enables the clamp, `false` disables it, and
+`auto` enables a non-empty range. A missing endpoint is zero. Newton stores a
+symmetric effort limit, so asymmetric ranges use their larger magnitude; a
+smaller drive `maxForce` still wins. This matches Newton 1.7's MuJoCo resolver
+for scalar joints, including scalar axes merged into D6. Native D6 force
+ranges are rejected because Newton does not apply them.
+`mjc:springdamper` remains unsupported and raises an error if authored.
 
 ## Model construction and binding
 
@@ -187,3 +204,28 @@ ovnewton does not configure the separate Newton, Warp, or ovstage logging facili
 ovnewton does not emit metrics or implement capture and replay. The application owns the solver and stepping loop, so it also owns performance counters, OTel integration, and capture of the composed Newton/ovstage workflow. The stage transport is a latest-value interchange surface, not a replay history.
 
 See [Support](support.md) for the current feature set and known limits.
+
+
+### MuJoCo position and velocity actuators
+
+`MjcActuator` prims targeting an unmerged revolute or prismatic joint support
+fixed gains, affine bias, unit gear and no activation dynamics. As in Newton
+`add_usd()`, position and velocity forms use `control.joint_target_q` and
+`control.joint_target_qd`. The importer retains MuJoCo actuator rows, including
+explicit control/force ranges, tri-state limit flags and `mjc:inheritRange`.
+Inherited ranges use absolute joint limits, including `mjc:ref`.
+
+This support reads the populated OVStage and works with the pinned OVStage wheel.
+It does not reopen the source USD or fall back to Newton's USD importer.
+The {ref}`mujoco-joint-parameters` precedence and population limits also apply.
+
+Positive `biasPrm[2]` damping-ratio placeholders remain direct MuJoCo actuators,
+as in `add_usd()`. MuJoCo resolves their damping during compilation; control
+comes from `control.mujoco.ctrl`, not the joint target arrays.
+
+Populate with `ovnewton.population_desc()` and register
+`SolverMuJoCo.register_custom_attributes(builder)` before `add_ovstage()`.
+Unsupported activation settings (including `mjc:actDim`), native USD instances,
+non-scalar or merged targets, and multiple actuators of the same kind on one
+joint raise an error. Missing target paths are invalid scene data. This support does not cover
+`NewtonActuator` components, tendon/site targets or general MuJoCo actuators.

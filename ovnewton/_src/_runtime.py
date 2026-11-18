@@ -19,6 +19,7 @@ from types import MappingProxyType, SimpleNamespace
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
+import ovstage
 import warp as wp
 from ovstage import (
     AttributeSemantic,
@@ -38,18 +39,56 @@ from ovstage import (
 
 from . import _stage
 from ._errors import OvstageContractError
+from ._output_descriptors import (
+    _FRICTION,
+    _GRAVITY,
+    _JOINT_ARMATURE,
+    _JOINT_DAMPING,
+    _JOINT_FRICTION,
+    _JOINT_LIMIT,
+    _JOINT_MAX_FORCE,
+    _JOINT_MAX_VELOCITY,
+    _JOINT_POSITION,
+    _JOINT_POSITION_TARGET,
+    _JOINT_STIFFNESS,
+    _JOINT_VELOCITY,
+    _JOINT_VELOCITY_TARGET,
+    _NEWTON_BODY_Q,
+    _NEWTON_BODY_QD,
+    _NEWTON_JOINT_ARMATURE,
+    _NEWTON_JOINT_EFFORT_LIMIT,
+    _NEWTON_JOINT_F,
+    _NEWTON_JOINT_FRICTION,
+    _NEWTON_JOINT_LIMIT_LOWER,
+    _NEWTON_JOINT_LIMIT_UPPER,
+    _NEWTON_JOINT_Q,
+    _NEWTON_JOINT_QD,
+    _NEWTON_JOINT_TARGET_KD,
+    _NEWTON_JOINT_TARGET_KE,
+    _NEWTON_JOINT_TARGET_Q,
+    _NEWTON_JOINT_TARGET_QD,
+    _NEWTON_JOINT_VELOCITY_LIMIT,
+    _OUTPUT_ATTRIBUTES,
+    _OUTPUT_DESCRIPTORS,
+    _RESTITUTION,
+    _SHAPE_COUNT,
+)
+from ._read_fields import _OutputDescriptor
 from ._schema_names import (
     BODY_ANGULAR_VELOCITY,
     BODY_VELOCITY,
     RESET_XFORM_STACK,
+    USD_PRIM_TYPE,
     WORLD_MATRIX,
     XFORM,
     joint_drive,
+    joint_limit,
     joint_state,
 )
 from .ovnewton import (
     ObjectScope,
     Query,
+    ReadColumn,
     ReadGroup,
     ReadResult,
     SimObjectType,
@@ -60,99 +99,6 @@ from .ovnewton import (
 _DEG_PER_RAD = 57.29577951308232
 _FLOAT32_MAX = 3.4028234663852886e38
 _NEWTON_LIMIT_MAX = 1.0e10
-
-_BODY_Q = "body_q"
-_BODY_QD = "body_qd"
-_POSITION = "position"
-_ORIENTATION = "orientation"
-_LINEAR_VELOCITY = "linearVelocity"
-_ANGULAR_VELOCITY = "angularVelocity"
-_LINEAR_ACCELERATION = "linearAcceleration"
-_ANGULAR_ACCELERATION = "angularAcceleration"
-_GRAVITY = "gravity"
-_MASS = "mass"
-_INERTIA = "inertia"
-_CENTER_OF_MASS_POSITION = "centerOfMassPosition"
-_SHAPE_COUNT = "shapeCount"
-_FRICTION = "friction"
-_RESTITUTION = "restitution"
-_ROOT_POSITION = "rootPosition"
-_ROOT_ORIENTATION = "rootOrientation"
-_ROOT_LINEAR_VELOCITY = "rootLinearVelocity"
-_ROOT_ANGULAR_VELOCITY = "rootAngularVelocity"
-_JOINT_POSITION = "jointPosition"
-_JOINT_VELOCITY = "jointVelocity"
-_JOINT_POSITION_TARGET = "jointPositionTarget"
-_JOINT_VELOCITY_TARGET = "jointVelocityTarget"
-_JOINT_STIFFNESS = "jointStiffness"
-_JOINT_DAMPING = "jointDamping"
-_JOINT_LIMIT = "jointLimit"
-_JOINT_MAX_VELOCITY = "jointMaxVelocity"
-_JOINT_MAX_FORCE = "jointMaxForce"
-_JOINT_ARMATURE = "jointArmature"
-_JOINT_FRICTION = "jointFriction"
-_JOINT_Q = "joint_q"
-_JOINT_QD = "joint_qd"
-
-
-@dataclass(frozen=True)
-class _OutputDescriptor:
-    """One Newton output source behind the public read interface."""
-
-    domain: str
-    owner: str
-    source: str
-    width: int
-    conversion: Optional[str] = None
-
-
-_OUTPUT_DESCRIPTORS = MappingProxyType(
-    {
-        _BODY_Q: _OutputDescriptor("body", "state", "body_q", 7),
-        _BODY_QD: _OutputDescriptor("body", "state", "body_qd", 6),
-        _POSITION: _OutputDescriptor("body", "state", "body_q", 3, "transform_position"),
-        _ORIENTATION: _OutputDescriptor("body", "state", "body_q", 4, "transform_orientation"),
-        _LINEAR_VELOCITY: _OutputDescriptor("body", "state", "body_qd", 3, "spatial_linear"),
-        _ANGULAR_VELOCITY: _OutputDescriptor("body", "state", "body_qd", 3, "spatial_angular"),
-        _LINEAR_ACCELERATION: _OutputDescriptor("body", "state", "body_qdd", 3, "spatial_linear"),
-        _ANGULAR_ACCELERATION: _OutputDescriptor("body", "state", "body_qdd", 3, "spatial_angular"),
-        _GRAVITY: _OutputDescriptor("scene", "model", "gravity", 3),
-        _MASS: _OutputDescriptor("body", "model", "body_mass", 1),
-        _INERTIA: _OutputDescriptor("body", "model", "body_inertia", 9),
-        _CENTER_OF_MASS_POSITION: _OutputDescriptor("body", "model", "body_com", 3),
-        _SHAPE_COUNT: _OutputDescriptor("shape", "query", "shape_counts", 1),
-        _FRICTION: _OutputDescriptor("shape", "model", "shape_material_mu", 0),
-        _RESTITUTION: _OutputDescriptor("shape", "model", "shape_material_restitution", 0),
-        _ROOT_POSITION: _OutputDescriptor("articulation", "state", "body_q", 3, "transform_position"),
-        _ROOT_ORIENTATION: _OutputDescriptor("articulation", "state", "body_q", 4, "transform_orientation"),
-        _ROOT_LINEAR_VELOCITY: _OutputDescriptor("articulation", "state", "body_qd", 3, "spatial_linear"),
-        _ROOT_ANGULAR_VELOCITY: _OutputDescriptor("articulation", "state", "body_qd", 3, "spatial_angular"),
-        _JOINT_POSITION: _OutputDescriptor("joint_position", "state", "joint_q", 0, "angular_degrees"),
-        _JOINT_VELOCITY: _OutputDescriptor("joint_velocity", "state", "joint_qd", 0, "angular_degrees"),
-        _JOINT_POSITION_TARGET: _OutputDescriptor(
-            "joint_target_position", "control", "joint_target_q", 0, "angular_degrees"
-        ),
-        _JOINT_VELOCITY_TARGET: _OutputDescriptor(
-            "joint_velocity", "control", "joint_target_qd", 0, "angular_degrees"
-        ),
-        _JOINT_STIFFNESS: _OutputDescriptor(
-            "joint_velocity", "model", "joint_target_ke", 0, "angular_per_degree"
-        ),
-        _JOINT_DAMPING: _OutputDescriptor(
-            "joint_velocity", "model", "joint_target_kd", 0, "angular_per_degree"
-        ),
-        _JOINT_LIMIT: _OutputDescriptor("joint_limit", "model", "joint_limit_lower", 0, "angular_degrees"),
-        _JOINT_MAX_VELOCITY: _OutputDescriptor(
-            "joint_velocity", "model", "joint_velocity_limit", 0, "angular_degrees"
-        ),
-        _JOINT_MAX_FORCE: _OutputDescriptor("joint_native_dof", "model", "joint_effort_limit", 0),
-        _JOINT_ARMATURE: _OutputDescriptor("joint_native_dof", "model", "joint_armature", 0),
-        _JOINT_FRICTION: _OutputDescriptor("joint_native_dof", "model", "joint_friction", 0),
-        _JOINT_Q: _OutputDescriptor("joint", "state", "joint_q", 0),
-        _JOINT_QD: _OutputDescriptor("joint", "state", "joint_qd", 0),
-    }
-)
-_OUTPUT_ATTRIBUTES = tuple(_OUTPUT_DESCRIPTORS)
 
 
 @dataclass
@@ -172,6 +118,8 @@ class _JointChannel:
     velocity_out: Any = field(init=False)
     q_indices: Any = field(init=False)
     qd_indices: Any = field(init=False)
+    coordinate_signs_host: Tuple[float, ...] = field(init=False, default=())
+    coordinate_signs: Any = field(init=False, default=None)
 
     def __post_init__(self) -> None:
         self.position_out = wp.empty(len(self.paths), dtype=wp.float32, device=self.device)
@@ -235,6 +183,9 @@ class _RuntimeTransport:
     derived_articulation_indices_host: Tuple[int, ...]
     derived_q_indices_host: Tuple[int, ...]
     derived_qd_indices_host: Tuple[int, ...]
+    body_indices_host: Optional[Tuple[int, ...]] = None
+    excluded_joints: frozenset[int] = frozenset()
+    body_paths: Tuple[str, ...] = field(init=False)
     device: Any = field(init=False)
     pose_out: Any = field(init=False)
     body_scale: Any = field(init=False, default=None)
@@ -265,22 +216,25 @@ class _RuntimeTransport:
     velocity_target_required: bool = field(init=False, default=False)
     producer_event: Any = field(init=False, default=None)
     _index_arrays: Dict[Tuple[int, ...], Any] = field(init=False, default_factory=dict)
-    _tokens: Dict[str, int] = field(init=False, default_factory=dict)
+    _tokens: Dict[str, ovstage.Token] = field(init=False, default_factory=dict)
 
     def __post_init__(self) -> None:
         self.device = wp.get_device(self.model.device)
         if self.device.is_cuda:
             self.producer_event = wp.Event(self.device)
-        body_count = self.model.body_count
+        if self.body_indices_host is None:
+            self.body_indices_host = tuple(range(self.model.body_count))
+        self.body_paths = tuple(self.model.body_label[index] for index in self.body_indices_host)
+        body_count = len(self.body_indices_host)
         self.pose_out = wp.empty(body_count * 16, dtype=wp.float64, device=self.device)
         self.reset_xform_stack_out = wp.ones(body_count, dtype=wp.bool, device=self.device)
         self.linear_out = wp.empty(body_count * 3, dtype=wp.float32, device=self.device)
         self.angular_out = wp.empty(body_count * 3, dtype=wp.float32, device=self.device)
-        self.linear_in = wp.empty(body_count, dtype=wp.vec3, device=self.device)
-        self.angular_in = wp.empty(body_count, dtype=wp.vec3, device=self.device)
-        self.body_rows = self.indices(range(body_count))
-        self.body_q_in = wp.empty(body_count, dtype=wp.transformf, device=self.device)
-        self.body_qd_in = wp.empty(body_count, dtype=wp.spatial_vectorf, device=self.device)
+        self.linear_in = wp.empty(self.model.body_count, dtype=wp.vec3, device=self.device)
+        self.angular_in = wp.empty(self.model.body_count, dtype=wp.vec3, device=self.device)
+        self.body_rows = self.indices(self.body_indices_host)
+        self.body_q_in = wp.empty(self.model.body_count, dtype=wp.transformf, device=self.device)
+        self.body_qd_in = wp.empty(self.model.body_count, dtype=wp.spatial_vectorf, device=self.device)
         self.joint_q_in = wp.empty(self.model.joint_q.shape, dtype=wp.float32, device=self.device)
         self.joint_qd_in = wp.empty(self.model.joint_qd.shape, dtype=wp.float32, device=self.device)
         if self.derived_articulation_indices_host:
@@ -297,8 +251,12 @@ class _RuntimeTransport:
         self.position_target_required = any(channel.position_target_rows for channel in self.channels)
         self.velocity_target_required = any(channel.velocity_target_rows for channel in self.channels)
         self.read_fields = {
-            _BODY_Q: _ReadField("state", "body_q", self.body_q_in, preserve_unmapped=False),
-            _BODY_QD: _ReadField("state", "body_qd", self.body_qd_in, preserve_unmapped=False),
+            _NEWTON_BODY_Q: _ReadField(
+                "state", "body_q", self.body_q_in, preserve_unmapped=body_count != self.model.body_count
+            ),
+            _NEWTON_BODY_QD: _ReadField(
+                "state", "body_qd", self.body_qd_in, preserve_unmapped=body_count != self.model.body_count
+            ),
             _JOINT_POSITION: _ReadField("state", "joint_q", self.joint_q_in),
             _JOINT_VELOCITY: _ReadField("state", "joint_qd", self.joint_qd_in),
             _JOINT_POSITION_TARGET: _ReadField(
@@ -323,11 +281,11 @@ class _RuntimeTransport:
             self._index_arrays[key] = result
         return result
 
-    def token(self, pd: Any, attribute: str) -> int:
+    def token(self, pd: Any, attribute: str) -> ovstage.Token:
         """Intern one runtime attribute once."""
         result = self._tokens.get(attribute)
         if result is None:
-            result = int(pd.intern_token(attribute))
+            result = pd.intern_token(attribute)
             self._tokens[attribute] = result
         return result
 
@@ -365,8 +323,8 @@ class _ReadColumn:
 @dataclass(frozen=True)
 class _ReadPlan:
     columns: Tuple[_ReadColumn, ...]
-    tokens: Tuple[int, ...]
-    by_token: Dict[int, _ReadColumn]
+    tokens: Tuple[ovstage.Token, ...]
+    by_token: Dict[ovstage.Token, _ReadColumn]
     fields: Tuple[str, ...]
 
 
@@ -427,12 +385,15 @@ def _wait_for_cuda_sync(item: _PendingRead, stream: Any, keepalive: List[Any]) -
             wp.synchronize_event(event)
 
 
-def _build_runtime_transport(model: Any, body_paths: Sequence[str], joint_labels: Sequence[str]) -> _RuntimeTransport:
+def _build_runtime_transport(
+    model: Any, body_paths: Sequence[str], joint_labels: Sequence[str], *,
+    body_indices: Optional[Tuple[int, ...]] = None, excluded_joints: frozenset[int] = frozenset(),
+) -> _RuntimeTransport:
     """Resolve immutable runtime mappings and allocate per-binding device buffers."""
     import newton  # noqa: PLC0415
 
     if not joint_labels or model.joint_count == 0:
-        runtime = _RuntimeTransport(model, (), (), (), ())
+        runtime = _RuntimeTransport(model, (), (), (), (), body_indices, excluded_joints)
         return _finalize_runtime_transport(runtime, body_paths)
 
     joint_type = model.joint_type.numpy()
@@ -463,6 +424,8 @@ def _build_runtime_transport(model: Any, body_paths: Sequence[str], joint_labels
     derived_qd_indices: List[int] = []
 
     for joint, label in enumerate(joint_labels):
+        if joint in excluded_joints:
+            continue
         joint_kind = int(joint_type[joint])
         articulation = articulation_by_joint.get(joint)
         if joint_kind in body_derived and articulation is not None:
@@ -496,6 +459,8 @@ def _build_runtime_transport(model: Any, body_paths: Sequence[str], joint_labels
         tuple(sorted(derived_articulations)),
         tuple(derived_q_indices),
         tuple(derived_qd_indices),
+        body_indices,
+        excluded_joints,
     )
     return _finalize_runtime_transport(runtime, body_paths)
 
@@ -546,29 +511,21 @@ def _finalize_runtime_transport(runtime: _RuntimeTransport, body_paths: Sequence
 
 
 def _capture_body_scales(
-    stage: Any,
-    pd: Any,
     runtime: _RuntimeTransport,
-    body_paths: Sequence[str],
-    ordinal: int,
+    rows: Mapping[int, np.ndarray],
 ) -> None:
-    """Keep the initial signed world scale in one reusable Warp buffer."""
+    """Keep signed world scales from the validated attachment snapshot."""
     from . import _build
 
-    if not body_paths:
+    if not runtime.body_paths:
         return
-    with _stage._path_list_query(stage, pd, body_paths) as query:
-        rows = _stage.read_fixed(stage, pd, query, WORLD_MATRIX, ordinal)
-    missing = [body_paths[i] for i in range(len(body_paths)) if i not in rows]
-    if missing:
-        raise OvstageContractError(f"rigid body has no world transform: {missing[0]}")
     matrices = np.stack(
-        [np.asarray(rows[i], dtype=np.float64).reshape(4, 4) for i in range(len(body_paths))]
+        [np.asarray(rows[i], dtype=np.float64).reshape(4, 4) for i in range(len(runtime.body_paths))]
     )
     _, _, scales = _build._decode_pose(matrices.reshape(-1, 16))
-    runtime.body_scale = wp.array(
-        scales.astype(np.float32), dtype=wp.vec3, device=runtime.device
-    )
+    all_scales = np.ones((runtime.model.body_count, 3), dtype=np.float32)
+    all_scales[list(runtime.body_indices_host)] = scales
+    runtime.body_scale = wp.array(all_scales, dtype=wp.vec3, device=runtime.device)
 
 
 @wp.kernel
@@ -576,16 +533,18 @@ def _encode_body_for_ovstage_kernel(
     body_q: wp.array(dtype=wp.transformf),
     body_qd: wp.array(dtype=wp.spatial_vectorf),
     body_scale: wp.array(dtype=wp.vec3),
+    body_indices: wp.array(dtype=wp.int32),
     pose_out: wp.array(dtype=wp.float64),
     linear_out: wp.array(dtype=wp.float32),
     angular_out: wp.array(dtype=wp.float32),
 ) -> None:
     """Encode the canonical ovstage body columns."""
     i = wp.tid()
-    t = body_q[i]
+    body = body_indices[i]
+    t = body_q[body]
     p = wp.transform_get_translation(t)
     qf = wp.normalize(wp.transform_get_rotation(t))
-    scale = body_scale[i]
+    scale = body_scale[body]
 
     # Cast to float64 for bit-exact match with the CPU encoder.
     x = wp.float64(qf[0])
@@ -636,7 +595,7 @@ def _encode_body_for_ovstage_kernel(
     pose_out[matrix + 14] = wp.float64(p[2])
     pose_out[matrix + 15] = one
 
-    qd = body_qd[i]
+    qd = body_qd[body]
     vector = i * 3
     linear_out[vector + 0] = qd[0]
     linear_out[vector + 1] = qd[1]
@@ -720,13 +679,14 @@ def _encode_joint_state_for_ovstage_kernel(
     joint_qd: wp.array(dtype=wp.float32),
     q_indices: wp.array(dtype=wp.int32),
     qd_indices: wp.array(dtype=wp.int32),
+    coordinate_signs: wp.array(dtype=wp.float32),
     scale: wp.float32,
     position_out: wp.array(dtype=wp.float32),
     velocity_out: wp.array(dtype=wp.float32),
 ) -> None:
     i = wp.tid()
-    position_out[i] = joint_q[q_indices[i]] * scale
-    velocity_out[i] = joint_qd[qd_indices[i]] * scale
+    position_out[i] = joint_q[q_indices[i]] * scale * coordinate_signs[i]
+    velocity_out[i] = joint_qd[qd_indices[i]] * scale * coordinate_signs[i]
 
 
 @wp.kernel
@@ -744,17 +704,17 @@ def _gather_axis_output_kernel(
     source: wp.array(dtype=wp.float32),
     source_indices: wp.array(dtype=wp.int32),
     angular_mask: wp.array(dtype=wp.bool),
-    body_order_sign: wp.array(dtype=wp.float32),
+    coordinate_signs: wp.array(dtype=wp.float32),
     angular_scale: wp.float32,
-    apply_body_order_sign: wp.bool,
+    apply_coordinate_signs: wp.bool,
     destination: wp.array(dtype=wp.float32),
 ) -> None:
     i = wp.tid()
     value = source[source_indices[i]]
     if angular_mask[i]:
         value *= angular_scale
-    if apply_body_order_sign:
-        value *= body_order_sign[i]
+    if apply_coordinate_signs:
+        value *= coordinate_signs[i]
     destination[i] = value
 
 
@@ -764,7 +724,7 @@ def _gather_axis_limit_output_kernel(
     upper: wp.array(dtype=wp.float32),
     source_indices: wp.array(dtype=wp.int32),
     angular_mask: wp.array(dtype=wp.bool),
-    body_order_sign: wp.array(dtype=wp.float32),
+    coordinate_signs: wp.array(dtype=wp.float32),
     angular_scale: wp.float32,
     destination: wp.array(dtype=wp.vec2),
 ) -> None:
@@ -773,7 +733,7 @@ def _gather_axis_limit_output_kernel(
     scale = angular_scale if angular_mask[i] else wp.float32(1.0)
     low = lower[source]
     high = upper[source]
-    if body_order_sign[i] < 0.0:
+    if coordinate_signs[i] < 0.0:
         low = -upper[source]
         high = -lower[source]
     low = -wp.float32(_FLOAT32_MAX) if low <= -wp.float32(_NEWTON_LIMIT_MAX) else low * scale
@@ -887,6 +847,19 @@ def _scatter_scalar_kernel(
     destination[destination_rows[i]] = source[source_rows[i]] * scale
 
 
+@wp.kernel
+def _scatter_joint_scalar_kernel(
+    source: wp.array(dtype=wp.float32),
+    source_rows: wp.array(dtype=wp.int32),
+    destination_rows: wp.array(dtype=wp.int32),
+    scales: wp.array(dtype=wp.float32),
+    destination: wp.array(dtype=wp.float32),
+) -> None:
+    i = wp.tid()
+    row = destination_rows[i]
+    destination[row] = source[source_rows[i]] * scales[row]
+
+
 def _device_index_tensor(rows: Optional[Tuple[int, ...]], device: Any) -> Any:
     if rows is None:
         return None
@@ -926,12 +899,12 @@ def _native_output_dltensor(
 
 
 @dataclass(frozen=True)
-class _JointOutputGroup:
+class _JointOutputLayout:
     width: int
     offset: int
     source_row_count: int
     prim_count: int
-    prim_list: int
+    prim_list: ovstage.PrimPathList
     data_indices_host: Optional[Tuple[int, ...]]
     data_index_tensor: Any
 
@@ -939,9 +912,9 @@ class _JointOutputGroup:
 @dataclass(frozen=True)
 class _JointOutputSelection:
     source_indices: Any
-    groups: Tuple[_JointOutputGroup, ...]
+    layouts: Tuple[_JointOutputLayout, ...]
     angular_mask: Any = None
-    body_order_sign: Any = None
+    coordinate_signs: Any = None
 
 
 @dataclass(frozen=True)
@@ -960,10 +933,10 @@ class _OutputCatalog:
     joint_dof_dim: Tuple[Tuple[int, int], ...]
     joint_is_articulation: Tuple[bool, ...]
     joint_position_supported: Tuple[bool, ...]
-    joint_body_order_sign: Tuple[float, ...]
+    joint_coordinate_signs: Tuple[Tuple[float, ...], ...]
     body_is_articulation_link: Tuple[bool, ...]
     all_paths: Tuple[str, ...]
-    names_by_token: Mapping[int, str]
+    names_by_token: Mapping[ovstage.Token, str]
 
 
 def _query_paths(binding: Any, stage_query: Any) -> List[str]:
@@ -1023,7 +996,7 @@ def _release_publication_query(query: StageQuery) -> None:
             raise
 
 
-def _create_publication_batches(binding: Any) -> Tuple[Tuple[StageQuery, Tuple[WriteDesc, ...]], ...]:
+def _create_publication_batches(binding: Any, ordinal: int) -> Tuple[Tuple[StageQuery, Tuple[WriteDesc, ...]], ...]:
     runtime = binding._runtime
     pd = binding._pd
     batches = []
@@ -1037,8 +1010,14 @@ def _create_publication_batches(binding: Any) -> Tuple[Tuple[StageQuery, Tuple[W
             resources.callback(_release_publication_query, query)
             return query
 
-        binding._surface_publication = None
-        body_paths = list(runtime.model.body_label)
+        def validate_points(query, counts):
+            rows = _stage.read_columns(binding._stage, pd, query, ["points"], ordinal, ragged=["points"])["points"]
+            if any(row not in rows or rows[row].size != count * 3 for row, count in enumerate(counts)):
+                raise OvstageContractError("deformable model ranges do not match the stage's point layout")
+
+        binding._particle_publication = None
+        binding._curve_publication = None
+        body_paths = list(runtime.body_paths)
         if body_paths:
             query = query_for_paths(body_paths)
             batches.append(
@@ -1111,23 +1090,63 @@ def _create_publication_batches(binding: Any) -> Tuple[Tuple[StageQuery, Tuple[W
                     ),
                 )
             )
-        from ._deformables import model_surface_ranges  # noqa: PLC0415
+        from ._deformables import model_particle_ranges  # noqa: PLC0415
 
-        surfaces = model_surface_ranges(runtime.model)
-        if surfaces:
-            query = query_for_paths([surface.geometry_path for surface in surfaces])
-            binding._surface_publication = (query, surfaces)
+        geometries = (*model_particle_ranges(runtime.model, "surface"), *model_particle_ranges(runtime.model, "volume"))
+        if geometries:
+            paths = [geometry.geometry_path for geometry in geometries]
+            if len(set(paths)) != len(paths):
+                raise ValueError("multiple particle deformables reference the same USD geometry")
+            query = query_for_paths(paths)
+            validate_points(query, [geometry.particle_end - geometry.particle_start for geometry in geometries])
+            # Identity frames publish slices directly; other frames reuse device buffers.
+            local_points = tuple(
+                None
+                if geometry.world_transform == (0, 0, 0, 0, 0, 0, 1)
+                else wp.empty(geometry.particle_end - geometry.particle_start, dtype=wp.vec3, device=runtime.device)
+                for geometry in geometries
+            )
+            binding._particle_publication = (query, geometries, local_points)
+        if binding._curves:
+            grouped = {}
+            for curve in binding._curves:
+                grouped.setdefault(curve.geometry_path, []).append(curve)
+            query = query_for_paths(list(grouped))
+            arrays = []
+            segments = []
+            for curves in grouped.values():
+                count = sum(curve.body_end - curve.body_start + 1 for curve in curves)
+                output = wp.empty(count, dtype=wp.vec3, device=runtime.device)
+                arrays.append(output)
+                offset = 0
+                for curve in curves:
+                    segments.append((curve, offset, output))
+                    offset += curve.body_end - curve.body_start + 1
+            validate_points(query, [output.shape[0] for output in arrays])
+            binding._curve_publication = (query, tuple(segments), tuple(arrays))
         result = tuple(batches)
         # Transfer cleanup to the binding only after setup succeeds.
         weakref.finalize(binding, resources.pop_all().close)
         return result
 
 
+def _output_path_list(
+    binding: Any,
+    paths: Sequence[str],
+    path_lists: Dict[Tuple[str, ...], ovstage.PrimPathList],
+) -> ovstage.PrimPathList:
+    """Reuse one handle per ordered selection, owned by the output query."""
+    key = tuple(paths)
+    if key not in path_lists:
+        path_lists[key] = binding._pd.create_path_list_from_strings(paths)
+    return path_lists[key]
+
+
 def _joint_output_selection(
     binding: Any,
     selected_joints: Sequence[Tuple[str, int]],
     starts: Sequence[int],
-    path_lists: List[int],
+    path_lists: Dict[Tuple[str, ...], ovstage.PrimPathList],
 ) -> Optional[_JointOutputSelection]:
     by_width: Dict[int, List[Tuple[str, int]]] = {}
     for path, joint in selected_joints:
@@ -1145,12 +1164,11 @@ def _joint_output_selection(
             paths = [path for path, _ in entries]
             rows = tuple((start - source_start) // width for _, start in entries)
             data_indices_host = rows if rows != tuple(range(len(rows))) else None
-            prim_list = binding._pd.create_path_list_from_strings(paths)
-            path_lists.append(prim_list)
+            prim_list = _output_path_list(binding, paths, path_lists)
             return _JointOutputSelection(
                 source_indices=None,
-                groups=(
-                    _JointOutputGroup(
+                layouts=(
+                    _JointOutputLayout(
                         width=width,
                         offset=source_start,
                         source_row_count=max(rows) + 1,
@@ -1163,16 +1181,15 @@ def _joint_output_selection(
             )
 
     indices = []
-    groups = []
+    layouts = []
     for width, entries in sorted(by_width.items()):
         offset = len(indices)
         paths = [path for path, _ in entries]
         for _, start in entries:
             indices.extend(range(start, start + width))
-        prim_list = binding._pd.create_path_list_from_strings(paths)
-        path_lists.append(prim_list)
-        groups.append(
-            _JointOutputGroup(
+        prim_list = _output_path_list(binding, paths, path_lists)
+        layouts.append(
+            _JointOutputLayout(
                 width=width,
                 offset=offset,
                 source_row_count=len(entries),
@@ -1184,7 +1201,7 @@ def _joint_output_selection(
         )
     return _JointOutputSelection(
         source_indices=wp.array(indices, dtype=wp.int32, device=binding._runtime.device),
-        groups=tuple(groups),
+        layouts=tuple(layouts),
     )
 
 
@@ -1194,7 +1211,7 @@ def _semantic_joint_output_selection(
     starts: Sequence[int],
     eligible: Sequence[bool],
     catalog: _OutputCatalog,
-    path_lists: List[int],
+    path_lists: Dict[Tuple[str, ...], ovstage.PrimPathList],
 ) -> Optional[_JointOutputSelection]:
     by_width: Dict[int, List[Tuple[str, int, int, int]]] = {}
     for path, joint in selected_joints:
@@ -1211,8 +1228,8 @@ def _semantic_joint_output_selection(
 
     indices = []
     angular_mask = []
-    body_order_sign = []
-    groups = []
+    coordinate_signs = []
+    layouts = []
     for width, entries in sorted(by_width.items()):
         offset = len(indices)
         paths = [path for path, _, _, _ in entries]
@@ -1220,11 +1237,10 @@ def _semantic_joint_output_selection(
             indices.extend(range(start, start + width))
             angular_mask.extend((False,) * linear_width)
             angular_mask.extend((True,) * (width - linear_width))
-            body_order_sign.extend((catalog.joint_body_order_sign[joint],) * width)
-        prim_list = binding._pd.create_path_list_from_strings(paths)
-        path_lists.append(prim_list)
-        groups.append(
-            _JointOutputGroup(
+            coordinate_signs.extend(catalog.joint_coordinate_signs[joint])
+        prim_list = _output_path_list(binding, paths, path_lists)
+        layouts.append(
+            _JointOutputLayout(
                 width=width,
                 offset=offset,
                 source_row_count=len(entries),
@@ -1236,9 +1252,9 @@ def _semantic_joint_output_selection(
         )
     return _JointOutputSelection(
         source_indices=wp.array(indices, dtype=wp.int32, device=binding._runtime.device),
-        groups=tuple(groups),
+        layouts=tuple(layouts),
         angular_mask=wp.array(angular_mask, dtype=wp.bool, device=binding._runtime.device),
-        body_order_sign=wp.array(body_order_sign, dtype=wp.float32, device=binding._runtime.device),
+        coordinate_signs=wp.array(coordinate_signs, dtype=wp.float32, device=binding._runtime.device),
     )
 
 
@@ -1327,25 +1343,22 @@ def create_query(
         elif strict:
             raise ValueError(f"path is not an output-capable bound object: {path}")
 
-    path_lists = []
+    path_lists: Dict[Tuple[str, ...], ovstage.PrimPathList] = {}
     try:
         body_index_array = None
         body_index_tensor = None
         body_indices_host = None
         body_prim_list = 0
         if body_paths:
-            body_prim_list = binding._pd.create_path_list_from_strings(body_paths)
-            path_lists.append(body_prim_list)
+            body_prim_list = _output_path_list(binding, body_paths, path_lists)
 
         scene_prim_list = 0
         if scene_paths:
-            scene_prim_list = binding._pd.create_path_list_from_strings(scene_paths)
-            path_lists.append(scene_prim_list)
+            scene_prim_list = _output_path_list(binding, scene_paths, path_lists)
 
         articulation_prim_list = 0
         if articulation_paths:
-            articulation_prim_list = binding._pd.create_path_list_from_strings(articulation_paths)
-            path_lists.append(articulation_prim_list)
+            articulation_prim_list = _output_path_list(binding, articulation_paths, path_lists)
 
         articulation_indices_host = tuple(articulation_indices) or None
         articulation_index_array = (
@@ -1390,7 +1403,8 @@ def create_query(
             catalog.joint_q_start,
             path_lists,
         )
-        joint_qd = _joint_output_selection(
+        # Selection metadata shared by State.joint_qd and Control.joint_f.
+        native_joint_dofs = _joint_output_selection(
             binding,
             selected_joints,
             catalog.joint_qd_start,
@@ -1447,9 +1461,9 @@ def create_query(
                 if descriptor.domain == "articulation"
             )
         if joint_q is not None:
-            available.append(_JOINT_Q)
-        if joint_qd is not None:
-            available.append(_JOINT_QD)
+            available.append(_NEWTON_JOINT_Q)
+        if native_joint_dofs is not None:
+            available.extend((_NEWTON_JOINT_QD, _NEWTON_JOINT_F))
         if joint_position is not None:
             available.append(_JOINT_POSITION)
         if joint_velocity is not None:
@@ -1457,6 +1471,7 @@ def create_query(
             available.extend(
                 (
                     _JOINT_VELOCITY_TARGET,
+                    _NEWTON_JOINT_TARGET_QD,
                     _JOINT_STIFFNESS,
                     _JOINT_DAMPING,
                     _JOINT_LIMIT,
@@ -1465,8 +1480,23 @@ def create_query(
             )
         if joint_position_target is not None:
             available.append(_JOINT_POSITION_TARGET)
+            available.append(_NEWTON_JOINT_TARGET_Q)
         if joint_dof is not None:
-            available.extend((_JOINT_MAX_FORCE, _JOINT_ARMATURE, _JOINT_FRICTION))
+            available.extend(
+                (
+                    _JOINT_MAX_FORCE,
+                    _JOINT_ARMATURE,
+                    _JOINT_FRICTION,
+                    _NEWTON_JOINT_TARGET_KE,
+                    _NEWTON_JOINT_TARGET_KD,
+                    _NEWTON_JOINT_LIMIT_LOWER,
+                    _NEWTON_JOINT_LIMIT_UPPER,
+                    _NEWTON_JOINT_VELOCITY_LIMIT,
+                    _NEWTON_JOINT_EFFORT_LIMIT,
+                    _NEWTON_JOINT_ARMATURE,
+                    _NEWTON_JOINT_FRICTION,
+                )
+            )
         attributes = tuple(runtime.token(binding._pd, name) for name in available)
         return Query(
             binding,
@@ -1484,7 +1514,7 @@ def create_query(
             articulation_prim_list=articulation_prim_list,
             articulation_count=len(articulation_paths),
             joint_q=joint_q,
-            joint_qd=joint_qd,
+            native_joint_dofs=native_joint_dofs,
             joint_dof=joint_dof,
             joint_position=joint_position,
             joint_velocity=joint_velocity,
@@ -1493,36 +1523,65 @@ def create_query(
             prim_count=matched_path_count,
             object_type=object_type,
             scope=scope,
-            path_lists=tuple(path_lists),
+            path_lists=tuple(path_lists.values()),
         )
     except Exception:
-        _destroy_path_lists(binding._pd, tuple(path_lists))
+        _destroy_path_lists(binding._pd, tuple(path_lists.values()))
         raise
 
 
-def _joint_body_order_signs(
+def _joint_coordinate_signs(
     binding: Any,
     joint_by_path: Mapping[str, int],
+    children: Sequence[int],
     ordinal: int,
-) -> Tuple[float, ...]:
-    """Map Newton joint directions back to the authored USD body order."""
+) -> Tuple[Tuple[float, ...], ...]:
+    """Map joint coordinates to USD using both endpoint order and axis polarity."""
+    import newton
+
     from . import _parse
 
     model = binding._runtime.model
-    signs = [1.0] * model.joint_count
-    paths = tuple(joint_by_path)
+    dof_starts = model.joint_qd_start.numpy()
+    signs = [(1.0,) * int(dof_starts[j + 1] - dof_starts[j]) for j in range(model.joint_count)]
+    joint_types = model.joint_type.numpy()
+    paths = list(joint_by_path)
     if not paths:
         return tuple(signs)
 
-    with _stage._path_list_query(binding._stage, binding._pd, paths) as query:
-        columns = _stage.read_columns(
-            binding._stage,
-            binding._pd,
-            query,
-            ("physics:body0", "physics:body1"),
-            ordinal,
-            ragged=("physics:body0", "physics:body1"),
-        )
+    bound_count = len(paths)
+    scalar_kinds = {"PhysicsPrismaticJoint", "PhysicsRevoluteJoint"}
+    limit_attrs = tuple(joint_limit(name, bound) for name, _, _ in _parse._D6_AXES for bound in ("low", "high"))
+
+    def read_metadata(paths: Sequence[str]) -> Dict[str, Dict[int, np.ndarray]]:
+        with _stage._path_list_query(binding._stage, binding._pd, paths) as query:
+            return _stage.read_columns(
+                binding._stage,
+                binding._pd,
+                query,
+                ("physics:body0", "physics:body1", "physics:axis", "physics:jointEnabled",
+                 "physics:excludeFromArticulation", "physics:localRot0", "physics:localRot1",
+                 USD_PRIM_TYPE, *limit_attrs),
+                ordinal,
+                ragged=("physics:body0", "physics:body1"),
+            )
+
+    columns = read_metadata(paths)
+    # Only merged D6 joints need source discovery: their Newton label points
+    # to a scalar USD joint. Native D6 bindings do not inspect other joints.
+    if any(
+        joint_types[joint_by_path[path]] == newton.JointType.D6
+        and _parse._token_value(binding._pd, columns[USD_PRIM_TYPE].get(row)) in scalar_kinds
+        for row, path in enumerate(paths)
+    ):
+        extra_paths = sorted({
+            path for kind in scalar_kinds
+            for path in _parse._type_paths(binding._stage, binding._pd, kind, ordinal)
+        } - set(paths))
+        if extra_paths:
+            for attr, values in read_metadata(extra_paths).items():
+                columns[attr].update((bound_count + row, value) for row, value in values.items())
+            paths.extend(extra_paths)
 
     body_paths = set(model.body_label)
     hierarchy = None
@@ -1535,7 +1594,7 @@ def _joint_body_order_signs(
             return None
         if len(values) != 1:
             raise ValueError(f"joint {paths[row]} has more than one body target")
-        path = binding._pd.path_to_string(int(values[0]))
+        path = _stage._path_to_string(binding._pd, values[0])
         if path not in body_paths:
             if hierarchy is None:
                 hierarchy = _parse.read_hierarchy(binding._stage, binding._pd, ordinal)
@@ -1548,23 +1607,82 @@ def _joint_body_order_signs(
         return path
 
     parents = model.joint_parent.numpy()
-    children = model.joint_child.numpy()
+    axes = model.joint_axis.numpy()
+    articulations = model.joint_articulation.numpy()
     body_labels = tuple(model.body_label)
-    for row, path in enumerate(paths):
-        joint = joint_by_path[path]
+    parent_frames = model.joint_X_p.numpy()
+    body_poses = model.body_q.numpy()
+    rows = {path: row for row, path in enumerate(paths)}
+    endpoints = {}
+    for row in range(len(paths)):
+        # Unbound malformed relationships cannot be a source of a merged joint.
+        # Bound model labels still receive the strict validation in target().
+        if row >= bound_count and any(
+            len(columns[attr].get(row, ())) > 1 for attr in ("physics:body0", "physics:body1")
+        ):
+            continue
+        endpoints[row] = target(columns["physics:body0"], row), target(columns["physics:body1"], row)
+    kinds = {
+        row: _stage._token_to_string(binding._pd, values[0]) for row, values in columns[USD_PRIM_TYPE].items()
+    }
+    excluded = [_parse._row_scalar(columns["physics:excludeFromArticulation"], row, False) for row in range(len(paths))]
+    scalar_rows_by_pair = {}
+    for row in sorted(endpoints, key=lambda row: paths[row]):
+        if kinds.get(row) in scalar_kinds and _parse._row_scalar(columns["physics:jointEnabled"], row, True):
+            scalar_rows_by_pair.setdefault((frozenset(endpoints[row]), excluded[row]), []).append(row)
+
+    def source_axes(row: int) -> List[Tuple[bool, Tuple[float, float, float]]]:
+        kind = kinds.get(row)
+        if kind in scalar_kinds:
+            axis_name = _parse._token_axis(binding._pd, columns["physics:axis"].get(row), path=paths[row]) or "X"
+            return [(kind == "PhysicsRevoluteJoint", _parse._AXIS_VECTORS[axis_name])]
+        if kind == "PhysicsJoint":
+            return [
+                (rotational, axis) for name, axis, rotational in _parse._D6_AXES
+                if _parse._active_d6_limits(columns, row, name) is not None
+            ]
+        return []
+
+    for path, joint in joint_by_path.items():
+        row = rows[path]
         parent = int(parents[joint])
         child = int(children[joint])
         parent_path = body_labels[parent] if parent >= 0 else None
         child_path = body_labels[child] if child >= 0 else None
-        body0 = target(columns["physics:body0"], row)
-        body1 = target(columns["physics:body1"], row)
-        if (parent_path, child_path) == (body0, body1):
-            signs[joint] = 1.0
-        elif (parent_path, child_path) == (body1, body0):
-            signs[joint] = -1.0
+        pair = (parent_path, child_path)
+        if pair == endpoints[row]:
+            order_sign = 1.0
+        elif pair == endpoints[row][::-1]:
+            order_sign = -1.0
         else:
-            raise ValueError(
-                f"joint {path} bodies do not match the connected Newton model"
+            if articulations[joint] >= 0:
+                raise ValueError(f"joint {path} bodies do not match the connected Newton model")
+            # Preserve partial caller-owned orphan bindings without inferring
+            # a coordinate convention from an unmatched endpoint pair.
+            continue
+        signs[joint] = (order_sign,) * len(signs[joint])
+        source_rows = [row]
+        if joint_types[joint] == newton.JointType.D6 and kinds.get(row) in scalar_kinds:
+            source_rows = scalar_rows_by_pair.get((frozenset(pair), excluded[row]), [])
+        authored = []
+        for source in source_rows:
+            swapped = endpoints[source] == pair[::-1]
+            local_rot = "physics:localRot1" if swapped else "physics:localRot0"
+            if parent < 0:
+                # World-rooted imports rebase the parent anchor onto the child.
+                local_rot = "physics:localRot0" if swapped else "physics:localRot1"
+            rotation = wp.quat(*_parse._row_tuple(columns[local_rot], source, 4, (0, 0, 0, 1)))
+            if parent < 0:
+                rotation = wp.mul(wp.quat(*body_poses[child, 3:]), rotation)
+            rotation = wp.mul(wp.quat_inverse(wp.quat(*parent_frames[joint, 3:])), rotation)
+            for rotational, axis in source_axes(source):
+                authored.append((rotational, wp.quat_rotate(rotation, wp.vec3(*axis)), -1.0 if swapped else 1.0))
+        # D6 coordinates are linear first, then angular, preserving source order.
+        authored.sort(key=lambda item: item[0])
+        if len(authored) == len(signs[joint]):
+            signs[joint] = tuple(
+                -sign if np.allclose(axes[dof_starts[joint] + offset], -np.asarray(axis), atol=1e-6) else sign
+                for offset, (_, axis, sign) in enumerate(authored)
             )
     return tuple(signs)
 
@@ -1576,7 +1694,7 @@ def _create_output_catalog(binding: Any, ordinal: int) -> _OutputCatalog:
 
     runtime = binding._runtime
     model = runtime.model
-    body_by_path = {path: index for index, path in enumerate(model.body_label)}
+    body_by_path = dict(zip(runtime.body_paths, runtime.body_indices_host))
     q_start = tuple(int(value) for value in model.joint_q_start.numpy())
     qd_start = tuple(int(value) for value in model.joint_qd_start.numpy())
     target_q_start = tuple(int(value) for value in model.joint_target_q_start.numpy())
@@ -1634,18 +1752,16 @@ def _create_output_catalog(binding: Any, ordinal: int) -> _OutputCatalog:
     joint_by_path = {
         path: joint
         for joint, path in enumerate(model.joint_label)
-        if isinstance(path, str)
+        if joint not in runtime.excluded_joints
+        and isinstance(path, str)
         and path.startswith("/")
         and (q_start[joint + 1] > q_start[joint] or qd_start[joint + 1] > qd_start[joint])
         and path not in body_by_path
     }
-    joint_body_order_sign = _joint_body_order_signs(
+    joint_coordinate_signs = _joint_coordinate_signs(
         binding,
-        {
-            path: joint
-            for path, joint in joint_by_path.items()
-            if joint_is_articulation[joint]
-        },
+        {path: joint for path, joint in joint_by_path.items() if joint_types[joint] != int(newton.JointType.FREE)},
+        joint_children,
         ordinal,
     )
     scene_paths = tuple(_parse._type_paths(binding._stage, binding._pd, "PhysicsScene", ordinal)[:1])
@@ -1663,11 +1779,10 @@ def _create_output_catalog(binding: Any, ordinal: int) -> _OutputCatalog:
     articulation_by_path = {}
     if model.articulation_count:
         articulation_start = model.articulation_start.numpy()
-        joint_child = model.joint_child.numpy()
         for articulation, label in enumerate(model.articulation_label):
             if articulation in authored_articulations:
                 root_joint = int(articulation_start[articulation])
-                articulation_by_path[label] = int(joint_child[root_joint])
+                articulation_by_path[label] = joint_children[root_joint]
     shape_body = model.shape_body.numpy()
     shapes_by_body_lists = [[] for _ in range(model.body_count)]
     for shape, body in enumerate(shape_body):
@@ -1688,11 +1803,11 @@ def _create_output_catalog(binding: Any, ordinal: int) -> _OutputCatalog:
         joint_dof_dim=dof_dim,
         joint_is_articulation=joint_is_articulation,
         joint_position_supported=joint_position_supported,
-        joint_body_order_sign=joint_body_order_sign,
+        joint_coordinate_signs=joint_coordinate_signs,
         body_is_articulation_link=body_is_articulation_link,
         all_paths=tuple(
             dict.fromkeys(
-                (*model.body_label, *joint_by_path, *scene_paths, *articulation_by_path)
+                (*runtime.body_paths, *joint_by_path, *scene_paths, *articulation_by_path)
             )
         ),
         names_by_token=MappingProxyType(names_by_token),
@@ -1701,11 +1816,17 @@ def _create_output_catalog(binding: Any, ordinal: int) -> _OutputCatalog:
 
 def initialize_output(binding: Any, ordinal: int) -> None:
     binding._output_catalog = _create_output_catalog(binding, ordinal)
+    catalog = binding._output_catalog
+    for channel in binding._runtime.channels:
+        channel.coordinate_signs_host = tuple(
+            catalog.joint_coordinate_signs[catalog.joint_by_path[path]][0] for path in channel.paths
+        )
+        channel.coordinate_signs = wp.array(channel.coordinate_signs_host, dtype=wp.float32, device=channel.device)
     binding._all_query = create_query(binding, paths=binding._output_catalog.all_paths)
-    binding._publication_batches = _create_publication_batches(binding)
+    binding._publication_batches = _create_publication_batches(binding, ordinal)
 
 
-def _normalize_output_attributes(binding: Any, attributes: Sequence[Any]) -> Tuple[str, ...]:
+def _normalize_output_attributes(binding: Any, attributes: Sequence[str | int | ovstage.Token]) -> Tuple[str, ...]:
     if isinstance(attributes, (str, bytes)):
         raise TypeError("attributes must be a sequence of output names or tokens")
     normalized = []
@@ -1713,13 +1834,13 @@ def _normalize_output_attributes(binding: Any, attributes: Sequence[Any]) -> Tup
     for attribute in attributes:
         if isinstance(attribute, str):
             name = attribute
-        elif isinstance(attribute, Integral) and not isinstance(attribute, bool):
-            token = int(attribute)
+        elif isinstance(attribute, (Integral, ovstage.Token)) and not isinstance(attribute, bool):
+            token = ovstage.Token(int(attribute)) if isinstance(attribute, Integral) else attribute
             name = binding._output_catalog.names_by_token.get(token)
             if name is None:
                 raise ValueError(f"attribute token {token} is not a supported output attribute")
         else:
-            raise TypeError("output attributes must be strings or interned integer tokens")
+            raise TypeError("output attributes must be strings or interned attribute tokens")
         if name not in _OUTPUT_ATTRIBUTES:
             raise ValueError(f"unsupported output attribute {name!r}")
         if name not in seen:
@@ -1728,11 +1849,12 @@ def _normalize_output_attributes(binding: Any, attributes: Sequence[Any]) -> Tup
     return tuple(normalized)
 
 
-def _native_output_group(
+def _append_output_column(
+    groups: Dict[ovstage.PrimPathList, List[ReadColumn]],
     storage: Any,
     *,
-    attribute: int,
-    prim_list: int,
+    attribute: ovstage.Token,
+    prim_list: ovstage.PrimPathList,
     prim_count: int,
     source: Any,
     source_row_count: int,
@@ -1741,47 +1863,42 @@ def _native_output_group(
     bits: int = 32,
     data_indices_host: Optional[Tuple[int, ...]] = None,
     data_index_tensor: Any = None,
-) -> ReadGroup:
-    return ReadGroup(
+) -> None:
+    column = ReadColumn(
         storage,
         attribute=attribute,
-        prim_list=prim_list,
-        prim_count=prim_count,
-        tensors=(
-            _native_output_dltensor(source, source_row_count, width, code=code, bits=bits),
-        ),
-        is_array=False,
+        data_count=prim_count,
+        tensor=_native_output_dltensor(source, source_row_count, width, code=code, bits=bits),
         data_indices=data_indices_host,
         data_index_tensor=data_index_tensor,
     )
+    groups.setdefault(prim_list, []).append(column)
 
 
-def _joint_output_groups(
+def _append_joint_output_columns(
+    groups: Dict[ovstage.PrimPathList, List[ReadColumn]],
     storage: Any,
-    attribute: int,
+    attribute: ovstage.Token,
     source: Any,
     selection: _JointOutputSelection,
     *,
     lane_multiplier: int = 1,
-) -> List[ReadGroup]:
-    groups = []
-    for layout in selection.groups:
+) -> None:
+    for layout in selection.layouts:
         start = layout.offset
         end = start + layout.source_row_count * layout.width
-        groups.append(
-            _native_output_group(
-                storage,
-                attribute=attribute,
-                prim_list=layout.prim_list,
-                prim_count=layout.prim_count,
-                source=source[start:end],
-                source_row_count=layout.source_row_count,
-                width=layout.width * lane_multiplier,
-                data_indices_host=layout.data_indices_host,
-                data_index_tensor=layout.data_index_tensor,
-            )
+        _append_output_column(
+            groups,
+            storage,
+            attribute=attribute,
+            prim_list=layout.prim_list,
+            prim_count=layout.prim_count,
+            source=source[start:end],
+            source_row_count=layout.source_row_count,
+            width=layout.width * lane_multiplier,
+            data_indices_host=layout.data_indices_host,
+            data_index_tensor=layout.data_index_tensor,
         )
-    return groups
 
 
 def _prepare_joint_output(
@@ -1791,7 +1908,7 @@ def _prepare_joint_output(
     stream: Any,
     *,
     angular_scale: Optional[float] = None,
-    apply_body_order_sign: bool = False,
+    apply_coordinate_signs: bool = False,
 ) -> Any:
     if selection.source_indices is None and angular_scale is None:
         return source
@@ -1812,9 +1929,9 @@ def _prepare_joint_output(
                 source,
                 selection.source_indices,
                 selection.angular_mask,
-                selection.body_order_sign,
+                selection.coordinate_signs,
                 angular_scale,
-                apply_body_order_sign,
+                apply_coordinate_signs,
                 output,
             ],
             device=device,
@@ -1839,7 +1956,7 @@ def _prepare_joint_limit_output(
             upper,
             selection.source_indices,
             selection.angular_mask,
-            selection.body_order_sign,
+            selection.coordinate_signs,
             _DEG_PER_RAD,
             output,
         ],
@@ -1922,8 +2039,8 @@ def _read_native_output(
                 _OUTPUT_DESCRIPTORS[name].domain == "articulation"
                 and query._articulation_count
             )
-            or (name == _JOINT_Q and query._joint_q is not None)
-            or (name == _JOINT_QD and query._joint_qd is not None)
+            or (name == _NEWTON_JOINT_Q and query._joint_q is not None)
+            or (name == _NEWTON_JOINT_QD and query._native_joint_dofs is not None)
             or (name == _JOINT_POSITION and query._joint_position is not None)
             or (name == _JOINT_VELOCITY and query._joint_velocity is not None)
         )
@@ -1934,8 +2051,9 @@ def _read_native_output(
     control_attributes_requested = any(
         _OUTPUT_DESCRIPTORS[name].owner == "control"
         and (
-            (name == _JOINT_POSITION_TARGET and query._joint_position_target is not None)
-            or (name == _JOINT_VELOCITY_TARGET and query._joint_velocity is not None)
+            (name in (_JOINT_POSITION_TARGET, _NEWTON_JOINT_TARGET_Q) and query._joint_position_target is not None)
+            or (name in (_JOINT_VELOCITY_TARGET, _NEWTON_JOINT_TARGET_QD) and query._joint_velocity is not None)
+            or (name == _NEWTON_JOINT_F and query._native_joint_dofs is not None)
         )
         for name in names
     )
@@ -2001,21 +2119,25 @@ def _read_native_output(
 
     joint_q = None
     joint_qd = None
-    if query._joint_q is not None and _JOINT_Q in names:
-        joint_q = _validate_array(state, "joint_q", int(runtime.model.joint_q.shape[0]), device)
-    if query._joint_qd is not None and _JOINT_QD in names:
-        joint_qd = _validate_array(state, "joint_qd", int(runtime.model.joint_qd.shape[0]), device)
+    if query._joint_q is not None and _NEWTON_JOINT_Q in names:
+        joint_q = _validate_native_scalar_array(
+            state, "joint_q", int(runtime.model.joint_q.shape[0]), device
+        )
+    if query._native_joint_dofs is not None and _NEWTON_JOINT_QD in names:
+        joint_qd = _validate_native_scalar_array(
+            state, "joint_qd", int(runtime.model.joint_qd.shape[0]), device
+        )
     joint_position = None
     joint_velocity = None
     if query._joint_position is not None and _JOINT_POSITION in names:
-        joint_position = _validate_array(
+        joint_position = _validate_native_scalar_array(
             state,
             "joint_q",
             int(runtime.model.joint_q.shape[0]),
             device,
         )
     if query._joint_velocity is not None and _JOINT_VELOCITY in names:
-        joint_velocity = _validate_array(
+        joint_velocity = _validate_native_scalar_array(
             state,
             "joint_qd",
             int(runtime.model.joint_qd.shape[0]),
@@ -2023,6 +2145,9 @@ def _read_native_output(
         )
 
     joint_field_selections = {
+        _NEWTON_JOINT_F: query._native_joint_dofs,
+        _NEWTON_JOINT_TARGET_Q: query._joint_position_target,
+        _NEWTON_JOINT_TARGET_QD: query._joint_velocity,
         _JOINT_POSITION_TARGET: query._joint_position_target,
         _JOINT_VELOCITY_TARGET: query._joint_velocity,
         _JOINT_STIFFNESS: query._joint_velocity,
@@ -2031,6 +2156,14 @@ def _read_native_output(
         _JOINT_MAX_FORCE: query._joint_dof,
         _JOINT_ARMATURE: query._joint_dof,
         _JOINT_FRICTION: query._joint_dof,
+        _NEWTON_JOINT_TARGET_KE: query._joint_dof,
+        _NEWTON_JOINT_TARGET_KD: query._joint_dof,
+        _NEWTON_JOINT_LIMIT_LOWER: query._joint_dof,
+        _NEWTON_JOINT_LIMIT_UPPER: query._joint_dof,
+        _NEWTON_JOINT_VELOCITY_LIMIT: query._joint_dof,
+        _NEWTON_JOINT_EFFORT_LIMIT: query._joint_dof,
+        _NEWTON_JOINT_ARMATURE: query._joint_dof,
+        _NEWTON_JOINT_FRICTION: query._joint_dof,
     }
     joint_field_sources = {}
     for name in names:
@@ -2039,24 +2172,24 @@ def _read_native_output(
             continue
         descriptor = _OUTPUT_DESCRIPTORS[name]
         owner = control if descriptor.owner == "control" else runtime.model
-        expected = getattr(runtime.model, descriptor.source)
-        joint_field_sources[name] = _validate_array(
+        expected_count = getattr(runtime.model, descriptor.source).shape[0]
+        joint_field_sources[name] = _validate_native_scalar_array(
             owner,
             descriptor.source,
-            int(expected.shape[0]),
+            int(expected_count),
             device,
         )
 
     joint_limit_sources = None
     if _JOINT_LIMIT in names and query._joint_velocity is not None:
         joint_limit_sources = (
-            _validate_array(
+            _validate_native_scalar_array(
                 runtime.model,
                 "joint_limit_lower",
                 int(runtime.model.joint_limit_lower.shape[0]),
                 device,
             ),
-            _validate_array(
+            _validate_native_scalar_array(
                 runtime.model,
                 "joint_limit_upper",
                 int(runtime.model.joint_limit_upper.shape[0]),
@@ -2092,7 +2225,10 @@ def _read_native_output(
         for name, source in shape_sources.items()
     }
     joint_q_out = _prepare_joint_output(joint_q, query._joint_q, device, stream) if joint_q is not None else None
-    joint_qd_out = _prepare_joint_output(joint_qd, query._joint_qd, device, stream) if joint_qd is not None else None
+    joint_qd_out = (
+        _prepare_joint_output(joint_qd, query._native_joint_dofs, device, stream)
+        if joint_qd is not None else None
+    )
     joint_position_out = (
         _prepare_joint_output(
             joint_position,
@@ -2100,7 +2236,7 @@ def _read_native_output(
             device,
             stream,
             angular_scale=_DEG_PER_RAD,
-            apply_body_order_sign=True,
+            apply_coordinate_signs=True,
         )
         if joint_position is not None
         else None
@@ -2112,7 +2248,7 @@ def _read_native_output(
             device,
             stream,
             angular_scale=_DEG_PER_RAD,
-            apply_body_order_sign=True,
+            apply_coordinate_signs=True,
         )
         if joint_velocity is not None
         else None
@@ -2131,7 +2267,7 @@ def _read_native_output(
             device,
             stream,
             angular_scale=angular_scale,
-            apply_body_order_sign=_OUTPUT_DESCRIPTORS[name].owner == "control",
+            apply_coordinate_signs=_OUTPUT_DESCRIPTORS[name].owner == "control",
         )
     joint_limit_out = (
         _prepare_joint_limit_output(
@@ -2192,144 +2328,138 @@ def _read_native_output(
             if source is not None and output is not source
         ),
     )
-    groups = []
+    groups: Dict[ovstage.PrimPathList, List[ReadColumn]] = {}
     for name in names:
         descriptor = _OUTPUT_DESCRIPTORS[name]
         if descriptor.domain == "body":
             source = body_outputs.get(name)
             if source is not None:
                 derived = descriptor.conversion is not None
-                groups.append(
-                    _native_output_group(
-                        storage,
-                        attribute=runtime.token(binding._pd, name),
-                        prim_list=query._body_prim_list,
-                        prim_count=query._body_count,
-                        source=source,
-                        source_row_count=(
-                            query._body_count if derived else runtime.model.body_count
-                        ),
-                        width=descriptor.width,
-                        data_indices_host=(
-                            None if derived else query._body_indices_host
-                        ),
-                        data_index_tensor=(
-                            None if derived else query._body_index_tensor
-                        ),
-                    )
+                _append_output_column(
+                    groups,
+                    storage,
+                    attribute=runtime.token(binding._pd, name),
+                    prim_list=query._body_prim_list,
+                    prim_count=query._body_count,
+                    source=source,
+                    source_row_count=(
+                        query._body_count if derived else runtime.model.body_count
+                    ),
+                    width=descriptor.width,
+                    data_indices_host=(
+                        None if derived else query._body_indices_host
+                    ),
+                    data_index_tensor=(
+                        None if derived else query._body_index_tensor
+                    ),
                 )
         elif descriptor.domain == "scene":
             source = scene_sources.get(name)
             if source is not None:
-                groups.append(
-                    _native_output_group(
-                        storage,
-                        attribute=runtime.token(binding._pd, name),
-                        prim_list=query._scene_prim_list,
-                        prim_count=query._scene_count,
-                        source=source,
-                        source_row_count=source.shape[0],
-                        width=descriptor.width,
-                    )
+                _append_output_column(
+                    groups,
+                    storage,
+                    attribute=runtime.token(binding._pd, name),
+                    prim_list=query._scene_prim_list,
+                    prim_count=query._scene_count,
+                    source=source,
+                    source_row_count=source.shape[0],
+                    width=descriptor.width,
                 )
         elif descriptor.domain == "articulation":
             source = articulation_outputs.get(name)
             if source is not None:
-                groups.append(
-                    _native_output_group(
-                        storage,
-                        attribute=runtime.token(binding._pd, name),
-                        prim_list=query._articulation_prim_list,
-                        prim_count=query._articulation_count,
-                        source=source,
-                        source_row_count=query._articulation_count,
-                        width=descriptor.width,
-                    )
+                _append_output_column(
+                    groups,
+                    storage,
+                    attribute=runtime.token(binding._pd, name),
+                    prim_list=query._articulation_prim_list,
+                    prim_count=query._articulation_count,
+                    source=source,
+                    source_row_count=query._articulation_count,
+                    width=descriptor.width,
                 )
         elif descriptor.domain == "shape":
             if name == _SHAPE_COUNT and query._shape_counts is not None:
-                groups.append(
-                    _native_output_group(
-                        storage,
-                        attribute=runtime.token(binding._pd, name),
-                        prim_list=query._body_prim_list,
-                        prim_count=query._body_count,
-                        source=query._shape_counts,
-                        source_row_count=query._body_count,
-                        width=1,
-                        code=DLDataTypeCode.kDLInt,
-                    )
+                _append_output_column(
+                    groups,
+                    storage,
+                    attribute=runtime.token(binding._pd, name),
+                    prim_list=query._body_prim_list,
+                    prim_count=query._body_count,
+                    source=query._shape_counts,
+                    source_row_count=query._body_count,
+                    width=1,
+                    code=DLDataTypeCode.kDLInt,
                 )
             else:
                 source = shape_outputs.get(name)
                 if source is not None:
-                    groups.append(
-                        _native_output_group(
-                            storage,
-                            attribute=runtime.token(binding._pd, name),
-                            prim_list=query._body_prim_list,
-                            prim_count=query._body_count,
-                            source=source,
-                            source_row_count=query._body_count,
-                            width=query._shape_width,
-                        )
+                    _append_output_column(
+                        groups,
+                        storage,
+                        attribute=runtime.token(binding._pd, name),
+                        prim_list=query._body_prim_list,
+                        prim_count=query._body_count,
+                        source=source,
+                        source_row_count=query._body_count,
+                        width=query._shape_width,
                     )
-        elif name == _JOINT_Q and joint_q is not None:
-            groups.extend(
-                _joint_output_groups(
-                    storage,
-                    runtime.token(binding._pd, name),
-                    joint_q_out,
-                    query._joint_q,
-                )
+        elif name == _NEWTON_JOINT_Q and joint_q is not None:
+            _append_joint_output_columns(
+                groups,
+                storage,
+                runtime.token(binding._pd, name),
+                joint_q_out,
+                query._joint_q,
             )
-        elif name == _JOINT_QD and joint_qd is not None:
-            groups.extend(
-                _joint_output_groups(
-                    storage,
-                    runtime.token(binding._pd, name),
-                    joint_qd_out,
-                    query._joint_qd,
-                )
+        elif name == _NEWTON_JOINT_QD and joint_qd is not None:
+            _append_joint_output_columns(
+                groups,
+                storage,
+                runtime.token(binding._pd, name),
+                joint_qd_out,
+                query._native_joint_dofs,
             )
         elif name == _JOINT_POSITION and joint_position is not None:
-            groups.extend(
-                _joint_output_groups(
-                    storage,
-                    runtime.token(binding._pd, name),
-                    joint_position_out,
-                    query._joint_position,
-                )
+            _append_joint_output_columns(
+                groups,
+                storage,
+                runtime.token(binding._pd, name),
+                joint_position_out,
+                query._joint_position,
             )
         elif name == _JOINT_VELOCITY and joint_velocity is not None:
-            groups.extend(
-                _joint_output_groups(
-                    storage,
-                    runtime.token(binding._pd, name),
-                    joint_velocity_out,
-                    query._joint_velocity,
-                )
+            _append_joint_output_columns(
+                groups,
+                storage,
+                runtime.token(binding._pd, name),
+                joint_velocity_out,
+                query._joint_velocity,
             )
         elif name in joint_field_outputs:
-            groups.extend(
-                _joint_output_groups(
-                    storage,
-                    runtime.token(binding._pd, name),
-                    joint_field_outputs[name],
-                    joint_field_selections[name],
-                )
+            _append_joint_output_columns(
+                groups,
+                storage,
+                runtime.token(binding._pd, name),
+                joint_field_outputs[name],
+                joint_field_selections[name],
             )
         elif name == _JOINT_LIMIT and joint_limit_out is not None:
-            groups.extend(
-                _joint_output_groups(
-                    storage,
-                    runtime.token(binding._pd, name),
-                    joint_limit_out,
-                    query._joint_velocity,
-                    lane_multiplier=2,
-                )
+            _append_joint_output_columns(
+                groups,
+                storage,
+                runtime.token(binding._pd, name),
+                joint_limit_out,
+                query._joint_velocity,
+                lane_multiplier=2,
             )
-    return ReadResult(groups)
+    return ReadResult([
+        ReadGroup(
+            storage, prim_list=prim_list, prim_count=columns[0].data_count, columns=columns,
+        )
+        for prim_list, columns in groups.items()
+    ])
 
 
 def read_output(
@@ -2338,7 +2468,7 @@ def read_output(
     control: Any,
     *,
     query: Optional[Query],
-    attributes: Sequence[Any],
+    attributes: Sequence[str | int | ovstage.Token],
 ) -> ReadResult:
     """Expose selected Newton state columns through read-only groups."""
     selected_query = binding._all_query if query is None else query
@@ -2346,6 +2476,42 @@ def read_output(
         raise ValueError("query belongs to a different StageBinding")
     names = _normalize_output_attributes(binding, attributes)
     return _read_native_output(binding, state, control, selected_query, names)
+
+
+@wp.kernel
+def _local_curve_points(
+    body_q: wp.array(dtype=wp.transformf),
+    half_lengths: wp.array(dtype=wp.float32),
+    start: int,
+    end: int,
+    world_transform: wp.transform,
+    offset: int,
+    output: wp.array(dtype=wp.vec3),
+):
+    i = wp.tid()
+    world = wp.vec3(0.0)
+    if i == 0:
+        world = wp.transform_point(body_q[start], wp.vec3(0, 0, -half_lengths[start]))
+    elif i == end - start:
+        world = wp.transform_point(body_q[end - 1], wp.vec3(0, 0, half_lengths[end - 1]))
+    else:
+        previous = start + i - 1
+        following = start + i
+        left = wp.transform_point(body_q[previous], wp.vec3(0, 0, half_lengths[previous]))
+        right = wp.transform_point(body_q[following], wp.vec3(0, 0, -half_lengths[following]))
+        world = (left + right) * 0.5
+    output[offset + i] = wp.transform_point(wp.transform_inverse(world_transform), world)
+
+
+@wp.kernel
+def _local_particle_points(
+    points: wp.array(dtype=wp.vec3),
+    start: int,
+    world_transform: wp.transform,
+    output: wp.array(dtype=wp.vec3),
+):
+    i = wp.tid()
+    output[i] = wp.transform_point(wp.transform_inverse(world_transform), points[start + i])
 
 
 def publish_output(binding: Any, state: Any, ordinal: int) -> None:
@@ -2361,17 +2527,18 @@ def publish_output(binding: Any, state: Any, ordinal: int) -> None:
         if runtime.channels:
             joint_q = _validate_array(state, "joint_q", int(model.joint_q.shape[0]), runtime.device)
             joint_qd = _validate_array(state, "joint_qd", int(model.joint_qd.shape[0]), runtime.device)
-        if binding._surface_publication is not None:
+        if binding._particle_publication is not None:
             particle_q = _validate_array(state, "particle_q", model.particle_count, runtime.device)
         stream = wp.get_stream(runtime.device) if runtime.device.is_cuda else None
-        if model.body_count:
+        if runtime.body_paths:
             wp.launch(
                 _encode_body_for_ovstage_kernel,
-                dim=model.body_count,
+                dim=len(runtime.body_paths),
                 inputs=[
                     body_q,
                     body_qd,
                     runtime.body_scale,
+                    runtime.body_rows,
                     runtime.pose_out,
                     runtime.linear_out,
                     runtime.angular_out,
@@ -2388,6 +2555,7 @@ def publish_output(binding: Any, state: Any, ordinal: int) -> None:
                     joint_qd,
                     channel.q_indices,
                     channel.qd_indices,
+                    channel.coordinate_signs,
                     wp.float32(_DEG_PER_RAD if channel.rotational else 1.0),
                     channel.position_out,
                     channel.velocity_out,
@@ -2395,22 +2563,50 @@ def publish_output(binding: Any, state: Any, ordinal: int) -> None:
                 device=runtime.device,
                 stream=stream,
             )
+        point_batches = []
+        if binding._particle_publication is not None:
+            query, geometries, local_points = binding._particle_publication
+            arrays = []
+            for geometry, output in zip(geometries, local_points):
+                if output is None:
+                    output = particle_q[geometry.particle_start : geometry.particle_end]
+                else:
+                    wp.launch(
+                        _local_particle_points,
+                        dim=output.shape[0],
+                        inputs=[particle_q, geometry.particle_start, wp.transform(*geometry.world_transform), output],
+                        device=runtime.device,
+                        stream=stream,
+                    )
+                arrays.append(output)
+            point_batches.append((query, tuple(arrays)))
+        if binding._curve_publication is not None:
+            query, segments, arrays = binding._curve_publication
+            for curve, offset, output in segments:
+                wp.launch(
+                    _local_curve_points,
+                    dim=curve.body_end - curve.body_start + 1,
+                    inputs=[body_q, model.ovnewton.curve_half_length, curve.body_start, curve.body_end,
+                            wp.transform(*curve.world_transform), offset, output],
+                    device=runtime.device,
+                    stream=stream,
+                )
+            point_batches.append((query, arrays))
         if stream is not None:
             stream.record_event(runtime.producer_event)
         operations = []
         try:
             for query, writes in binding._publication_batches:
                 operations.append(binding._stage.write_attributes(query, writes, int(ordinal)))
-            if binding._surface_publication is not None:
-                query, surfaces = binding._surface_publication
+            for query, arrays in point_batches:
                 tensors = tuple(
                     make_dltensor(
-                        particle_q[surface.particle_start : surface.particle_end],
+                        output,
                         dtype=DLDataType(code=DLDataTypeCode.kDLFloat, bits=32, lanes=3),
-                        shape=[surface.particle_end - surface.particle_start],
+                        shape=[output.shape[0]],
                         ndim=1,
                     )
-                    for surface in surfaces
+                    for output in arrays
                 )
                 event = (
                     int(runtime.producer_event.cuda_event)
@@ -2514,6 +2710,7 @@ def _make_read_plan(
 def _group_rows(
     column: _ReadColumn,
     group: Any,
+    payload: Any,
     runtime: _RuntimeTransport,
     source_row_count: int,
 ) -> Tuple[Tuple[int, ...], Tuple[int, ...], Tuple[int, ...]]:
@@ -2523,7 +2720,7 @@ def _group_rows(
     accepted_rows = column.expected_rows if column.accepted_rows is None else column.accepted_rows
     for local in range(group.prim_count):
         query_row = int(group.prim_index(local))
-        source_row = int(group.data_row_index(local))
+        source_row = int(payload.data_row_index(local))
         if query_row < 0 or query_row >= len(runtime.paths):
             raise OvstageContractError(
                 f"runtime attribute {column.attribute!r} returned query row {query_row} "
@@ -2543,11 +2740,11 @@ def _group_rows(
     return tuple(sorted(prim_rows)), tuple(source_rows), tuple(query_rows)
 
 
-def _capture_group_slice(column: _ReadColumn, group: Any, runtime: _RuntimeTransport):
-    if group.is_delete or group.tensor_count != 1:
+def _capture_group_slice(column: _ReadColumn, group: Any, payload: Any, runtime: _RuntimeTransport):
+    if payload.is_delete or payload.tensor_count != 1:
         raise OvstageContractError(f"{column.kind} {column.attribute!r} is unavailable in the bound layout")
     source, source_device = _tensor_source_view(
-        group.tensor(0),
+        payload.tensor(0),
         dtype=column.dtype,
         lanes=column.lanes,
         attribute=column.attribute,
@@ -2555,13 +2752,14 @@ def _capture_group_slice(column: _ReadColumn, group: Any, runtime: _RuntimeTrans
     prim_rows, source_rows, query_rows = _group_rows(
         column,
         group,
+        payload,
         runtime,
         int(source.shape[0]) // column.lanes,
     )
     destination_rows = column.destination_rows(tuple(query_rows))
     layout = _ReadSlice(
-        generation=int(group.meta.layout_generation),
-        ordinal=int(group.ordinal),
+        generation=int(payload.meta.layout_generation),
+        ordinal=int(payload.ordinal),
         source_size=int(source.shape[0]),
         count=len(query_rows),
         prim_rows_host=prim_rows,
@@ -2589,19 +2787,20 @@ def _capture_runtime_read_layout(stage: Any, pd: Any, runtime: _RuntimeTransport
             group = read.fetch_next()
             while group is not None:
                 try:
-                    column = token_to_column.get(group.attribute)
-                    if column is None:
-                        raise OvstageContractError(
-                            f"runtime layout returned unexpected attribute token {group.attribute}"
-                        )
-                    _stage._validate_payload_ordinal(group, ordinal, f"runtime attribute {column.attribute!r}")
-                    layout, _, _ = _capture_group_slice(column, group, runtime)
-                    if any(existing.prim_rows_host == layout.prim_rows_host for existing in column.slices):
-                        raise OvstageContractError(
-                            f"runtime layout for {column.attribute!r} contains duplicate prim groups"
-                        )
-                    column.slices.append(layout)
-                    seen[column.attribute].update(layout.query_rows_host)
+                    for payload in group.columns:
+                        column = token_to_column.get(payload.attribute)
+                        if column is None:
+                            raise OvstageContractError(
+                                f"runtime layout returned unexpected attribute token {payload.attribute}"
+                            )
+                        _stage._validate_payload_ordinal(payload, ordinal, f"runtime attribute {column.attribute!r}")
+                        layout, _, _ = _capture_group_slice(column, group, payload, runtime)
+                        if any(existing.prim_rows_host == layout.prim_rows_host for existing in column.slices):
+                            raise OvstageContractError(
+                                f"runtime layout for {column.attribute!r} contains duplicate prim groups"
+                            )
+                        column.slices.append(layout)
+                        seen[column.attribute].update(layout.query_rows_host)
                 finally:
                     stage.release_group(group)
                 group = read.fetch_next()
@@ -2668,79 +2867,82 @@ def _read_runtime_columns(
             group = read.fetch_next()
             while group is not None:
                 groups.append(group)
-                column = token_to_column.get(group.attribute)
-                if column is None:
-                    raise OvstageContractError(f"runtime read returned unexpected attribute token {group.attribute}")
-                _stage._validate_payload_ordinal(group, ordinal, f"runtime attribute {column.attribute!r}")
-                attribute = column.attribute
-                layouts = pending_slices.get(attribute, column.slices)
-                if group.is_delete and not column.expected_rows:
-                    group_counts[attribute] = len(layouts)
-                    seen_slice_rows[attribute].update(layout.prim_rows_host for layout in layouts)
-                    group = read.fetch_next()
-                    continue
-                if layouts and attribute not in pending_slices and not group_counts[attribute]:
-                    captured = layouts[0]
-                    generation = int(group.meta.layout_generation)
-                    if (
-                        captured.generation == 0
-                        and generation != captured.generation
-                        and int(group.ordinal) > captured.ordinal
-                    ):
-                        pending_slices[attribute] = []
-                        pending_rows[attribute] = set()
-                        layouts = pending_slices[attribute]
-                if attribute in pending_slices:
-                    layout, source, source_device = _capture_group_slice(column, group, runtime)
-                    layouts.append(layout)
-                    source_rows = layout.source_rows
-                    destination_rows = layout.destination_rows
-                else:
-                    if group.is_delete:
-                        raise _topology_changed(column, "a required group was deleted")
-                    if group.tensor_count != 1:
-                        raise _topology_changed(column, f"tensor count changed to {group.tensor_count}")
-                    source, source_device = _tensor_source_view(
-                        group.tensor(0),
-                        dtype=column.dtype,
-                        lanes=column.lanes,
-                        attribute=column.attribute,
-                    )
-                    prim_rows, source_rows_host, query_rows_host = _group_rows(
-                        column,
-                        group,
-                        runtime,
-                        int(source.shape[0]) // column.lanes,
-                    )
-                    layout = captured_by_rows[attribute].get(prim_rows)
-                    if layout is None:
-                        raise _topology_changed(column, "prim membership changed")
-                    if int(source.shape[0]) != layout.source_size:
-                        raise _topology_changed(column, "tensor shape changed")
-                    generation = int(group.meta.layout_generation)
-                    if generation != layout.generation:
-                        raise _topology_changed(column, "layout generation changed")
-                    source_rows = runtime.indices(source_rows_host)
-                    destination_rows = runtime.indices(column.destination_rows(query_rows_host))
-                if layout.prim_rows_host in seen_slice_rows[attribute]:
-                    raise _topology_changed(column, "prim membership changed")
-                if attribute in pending_rows:
-                    pending_rows[attribute].update(layout.query_rows_host)
-                seen_slice_rows[attribute].add(layout.prim_rows_host)
-                group_counts[attribute] += 1
-                if layout.count:
-                    pending.append(
-                        _PendingRead(
-                            column=column,
-                            layout=layout,
-                            source=source,
-                            source_device=source_device,
-                            source_rows=source_rows,
-                            destination_rows=destination_rows,
-                            cuda_stream=int(group.raw.data.cuda_sync.stream or 0),
-                            cuda_wait_event=int(group.raw.data.cuda_sync.wait_event or 0),
+                for payload in group.columns:
+                    column = token_to_column.get(payload.attribute)
+                    if column is None:
+                        raise OvstageContractError(
+                            f"runtime read returned unexpected attribute token {payload.attribute}"
                         )
-                    )
+                    _stage._validate_payload_ordinal(payload, ordinal, f"runtime attribute {column.attribute!r}")
+                    attribute = column.attribute
+                    layouts = pending_slices.get(attribute, column.slices)
+                    if payload.is_delete and not column.expected_rows:
+                        group_counts[attribute] = len(layouts)
+                        seen_slice_rows[attribute].update(layout.prim_rows_host for layout in layouts)
+                        continue
+                    if layouts and attribute not in pending_slices and not group_counts[attribute]:
+                        captured = layouts[0]
+                        generation = int(payload.meta.layout_generation)
+                        if (
+                            captured.generation == 0
+                            and generation != captured.generation
+                            and int(payload.ordinal) > captured.ordinal
+                        ):
+                            pending_slices[attribute] = []
+                            pending_rows[attribute] = set()
+                            layouts = pending_slices[attribute]
+                    if attribute in pending_slices:
+                        layout, source, source_device = _capture_group_slice(column, group, payload, runtime)
+                        layouts.append(layout)
+                        source_rows = layout.source_rows
+                        destination_rows = layout.destination_rows
+                    else:
+                        if payload.is_delete:
+                            raise _topology_changed(column, "a required group was deleted")
+                        if payload.tensor_count != 1:
+                            raise _topology_changed(column, f"tensor count changed to {payload.tensor_count}")
+                        source, source_device = _tensor_source_view(
+                            payload.tensor(0),
+                            dtype=column.dtype,
+                            lanes=column.lanes,
+                            attribute=column.attribute,
+                        )
+                        prim_rows, source_rows_host, query_rows_host = _group_rows(
+                            column,
+                            group,
+                            payload,
+                            runtime,
+                            int(source.shape[0]) // column.lanes,
+                        )
+                        layout = captured_by_rows[attribute].get(prim_rows)
+                        if layout is None:
+                            raise _topology_changed(column, "prim membership changed")
+                        if int(source.shape[0]) != layout.source_size:
+                            raise _topology_changed(column, "tensor shape changed")
+                        generation = int(payload.meta.layout_generation)
+                        if generation != layout.generation:
+                            raise _topology_changed(column, "layout generation changed")
+                        source_rows = runtime.indices(source_rows_host)
+                        destination_rows = runtime.indices(column.destination_rows(query_rows_host))
+                    if layout.prim_rows_host in seen_slice_rows[attribute]:
+                        raise _topology_changed(column, "prim membership changed")
+                    if attribute in pending_rows:
+                        pending_rows[attribute].update(layout.query_rows_host)
+                    seen_slice_rows[attribute].add(layout.prim_rows_host)
+                    group_counts[attribute] += 1
+                    if layout.count:
+                        pending.append(
+                            _PendingRead(
+                                column=column,
+                                layout=layout,
+                                source=source,
+                                source_device=source_device,
+                                source_rows=source_rows,
+                                destination_rows=destination_rows,
+                                cuda_stream=int(payload.raw.data.cuda_sync.stream or 0),
+                                cuda_wait_event=int(payload.raw.data.cuda_sync.wait_event or 0),
+                            )
+                        )
                 group = read.fetch_next()
 
         for column in columns:
@@ -2820,6 +3022,18 @@ def _validate_array(owner: Any, name: str, size: int, device: Any):
     return value
 
 
+def _validate_native_scalar_array(owner: Any, name: str, size: int, device: Any):
+    """Return a required float32 Warp array that joint reads may borrow or gather.
+
+    Borrowed reads describe the source as packed ``float32`` storage, so a
+    different dtype or non-contiguous layout would be misread silently.
+    """
+    value = _validate_array(owner, name, size, device)
+    if value.dtype != wp.float32 or not value.is_contiguous:
+        raise ValueError(f"{type(owner).__name__}.{name} must be a contiguous float32 array")
+    return value
+
+
 def _validate_control_array(
     value: Any,
     name: str,
@@ -2879,7 +3093,10 @@ def _body_read_columns(runtime: _RuntimeTransport) -> List[_ReadColumn]:
             device=runtime.device,
         )
 
-    expected = frozenset(range(runtime.model.body_count))
+    def destination_rows(rows):
+        return tuple(runtime.body_indices_host[row] for row in rows)
+
+    expected = frozenset(range(len(runtime.body_paths)))
     columns = [
         _ReadColumn(
             WORLD_MATRIX,
@@ -2887,8 +3104,8 @@ def _body_read_columns(runtime: _RuntimeTransport) -> List[_ReadColumn]:
             16,
             expected,
             consume_pose,
-            destination_rows=lambda rows: rows,
-            field_name=_BODY_Q,
+            destination_rows=destination_rows,
+            field_name=_NEWTON_BODY_Q,
         )
     ]
     linear, angular = runtime.linear_in, runtime.angular_in
@@ -2912,8 +3129,8 @@ def _body_read_columns(runtime: _RuntimeTransport) -> List[_ReadColumn]:
                 3,
                 expected,
                 consume_vector(linear),
-                destination_rows=lambda rows: rows,
-                field_name=_BODY_QD,
+                destination_rows=destination_rows,
+                field_name=_NEWTON_BODY_QD,
             ),
             _ReadColumn(
                 BODY_ANGULAR_VELOCITY,
@@ -2921,8 +3138,8 @@ def _body_read_columns(runtime: _RuntimeTransport) -> List[_ReadColumn]:
                 3,
                 expected,
                 consume_vector(angular),
-                destination_rows=lambda rows: rows,
-                field_name=_BODY_QD,
+                destination_rows=destination_rows,
+                field_name=_NEWTON_BODY_QD,
             ),
         ]
     )
@@ -2943,12 +3160,18 @@ def _joint_scalar_column(
 ) -> _ReadColumn:
     destination = runtime.read_fields[field_name].staging
     destination_by_query = dict(zip(query_rows, destination_indices, strict=True))
+    signed_scales = None
+    if any(sign < 0 for sign in channel.coordinate_signs_host):
+        scales = np.full(destination.shape[0], scale, dtype=np.float32)
+        scales[list(destination_indices)] *= channel.coordinate_signs_host
+        signed_scales = wp.array(scales, dtype=wp.float32, device=channel.device)
 
     def consume(source, source_rows, destination_rows, count):
         wp.launch(
-            _scatter_scalar_kernel,
+            _scatter_scalar_kernel if signed_scales is None else _scatter_joint_scalar_kernel,
             dim=count,
-            inputs=[source, source_rows, destination_rows, wp.float32(scale), destination],
+            inputs=[source, source_rows, destination_rows,
+                    wp.float32(scale) if signed_scales is None else signed_scales, destination],
             device=channel.device,
         )
 
@@ -3137,10 +3360,10 @@ def read_runtime(
             wp.copy(field.staging, destination)
 
     def finish_body_decode() -> None:
-        if _BODY_QD in plan.fields:
+        if _NEWTON_BODY_QD in plan.fields and runtime.body_paths:
             wp.launch(
                 _decode_velocity_kernel,
-                dim=runtime.model.body_count,
+                dim=len(runtime.body_paths),
                 inputs=[runtime.body_rows, runtime.linear_in, runtime.angular_in, runtime.body_qd_in],
                 device=runtime.device,
             )
@@ -3167,3 +3390,72 @@ def read_runtime(
     # Commit only after every requested column has been validated and decoded.
     for destination, field in destinations:
         wp.copy(destination, field.staging)
+
+
+@wp.kernel
+def _check_finite_targets(source: wp.array(dtype=wp.float32), invalid: wp.array(dtype=wp.int32)):
+    if not wp.isfinite(source[wp.tid()]):
+        wp.atomic_max(invalid, 0, 1)
+
+
+@wp.kernel
+def _scatter_targets(
+    source: wp.array(dtype=wp.float32),
+    indices: wp.array(dtype=wp.int32),
+    destination: wp.array(dtype=wp.float32),
+):
+    i = wp.tid()
+    destination[indices[i]] = source[i]
+
+
+def write_runtime(binding, control, *, query, values):
+    """Validate native target arrays, then scatter only the selected coordinates."""
+    runtime = binding._runtime
+    if not isinstance(query, Query) or query._binding_ref() is not binding:
+        raise ValueError("query belongs to a different StageBinding")
+    if not isinstance(values, Mapping):
+        raise TypeError("values must map field names to Warp arrays")
+    selections = {
+        _NEWTON_JOINT_TARGET_Q: query._joint_position_target,
+        _NEWTON_JOINT_TARGET_QD: query._joint_velocity,
+    }
+    for name in values:
+        if name not in selections:
+            raise ValueError(f"unsupported writable attribute {name!r}; only native joint targets are writable")
+    if not values:
+        return
+    if control is None:
+        raise ValueError("control is required for joint target writes")
+    if runtime.device.is_cuda and wp.get_stream(runtime.device).device.is_capturing:
+        raise RuntimeError("direct writes cannot run during CUDA graph capture")
+    prepared = []
+    for name, source in values.items():
+        selection = selections[name]
+        if (
+            selection is None
+            or any(layout.width != 1 for layout in selection.layouts)
+            or sum(layout.prim_count for layout in selection.layouts) != query.prim_count
+            or query._joint_q is None
+            or any(layout.width != 1 for layout in query._joint_q.layouts)
+        ):
+            raise ValueError("direct target writes require a query selecting only scalar articulation joints")
+        count = query.prim_count
+        if not isinstance(source, wp.array) or source.dtype != wp.float32 or source.shape != (count,):
+            raise ValueError(f"{name} requires a float32 Warp array with shape ({count},)")
+        if source.device != runtime.device:
+            raise ValueError(f"{name} input must be on {runtime.device}")
+        destination = _validate_array(control, name, getattr(runtime.model, name).shape[0], runtime.device)
+        if destination.dtype != wp.float32:
+            raise ValueError(f"{name} destination must have float32 dtype")
+        # Keep snapshots on the device, including when inputs alias destination buffers.
+        prepared.append((wp.clone(source), selection.source_indices, destination))
+    invalid = wp.zeros(1, dtype=wp.int32, device=runtime.device)
+    for source, _, _ in prepared:
+        wp.launch(_check_finite_targets, dim=source.shape[0], inputs=[source, invalid], device=runtime.device)
+    # Only a validation flag crosses to the host; target payloads stay on the device.
+    if invalid.numpy()[0]:
+        raise ValueError("joint target inputs must be finite")
+    for source, indices, destination in prepared:
+        wp.launch(_scatter_targets, dim=source.shape[0], inputs=[source, indices, destination], device=runtime.device)
+    if runtime.device.is_cuda:
+        wp.synchronize_stream(wp.get_stream(runtime.device))

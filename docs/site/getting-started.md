@@ -41,9 +41,8 @@ Selecting MuJoCo does not require a scene authored with `Mjc*` schemas.
 The example registers solver-owned model attributes before population and, for
 VBD, colors the populated builder before finalization.
 The normal MuJoCo path uses MuJoCo-Warp on both CPU and CUDA and supplies
-contacts through Newton's collision pipeline. Native MuJoCo CPU execution and
-MuJoCo contact generation are rare debugging options, not the recommended
-application path.
+contacts through Newton's collision pipeline. The examples and tests always use
+the MuJoCo-Warp backend. MuJoCo contact generation remains a debugging option.
 
 The simulation runs on `cuda:0` by default. Pass `--device cpu` to simulate on the CPU. The wheel also includes a complete cartpole scene:
 
@@ -68,6 +67,23 @@ python -m ovnewton.examples.example_ovnewton_robot
 python -m ovnewton.examples.example_ovnewton_robot --solver vbd
 ```
 
+To simulate cables, cloth, and a tetrahedral volume together with VBD:
+
+```console
+python -m ovnewton.examples.example_ovnewton_deformables
+```
+
+The basic, robot, and deformables examples capture the physics loop in a CUDA
+graph by default. Each frame replays
+the same collision checks and solver substeps, then publishes to OVStage and
+renders normally. CPU simulation uses the direct loop. To disable capture for debugging or performance comparisons, pass
+`--cuda-graph false`:
+
+```console
+python -m ovnewton.examples.example_ovnewton_basic --cuda-graph false
+python -m ovnewton.examples.example_ovnewton_robot --solver vbd --cuda-graph true
+```
+
 OVRTX debug synchronization is disabled by default. Use `--render-debug-sync true`
 for diagnostics, or `--render-debug-sync false` to explicitly use the default:
 
@@ -76,8 +92,9 @@ python -m ovnewton.examples.example_ovnewton_basic --render-debug-sync false
 python -m ovnewton.examples.example_ovnewton_robot --render-debug-sync true
 ```
 
-Rendering remains blocking with debug synchronization disabled and preserves
-the simulate → publish → seal → render order. For the basic example,
+The deformables example accepts the same option. Rendering remains blocking
+with debug synchronization disabled and preserves the
+simulate → publish → seal → render order. For the basic and deformables examples,
 `--no-render` makes the option irrelevant. To measure its effect, compare the
 same workload without `--timing`, which adds separate synchronization.
 

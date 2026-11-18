@@ -15,10 +15,13 @@ This replaces the old ``GpuViewport`` ctypes wrapper around
 frames needs only ``pyglet`` (installed with the ``examples`` extra) and
 ``warp``, so it works in any pip-installed layout. Import and use:
 
+    from newton.viewer import Picking
     from utils.viewport import GLViewport
 
-    vp = GLViewport("my example", width=w, height=h, stage=stage)
-    vp.show(frame)                    # per frame; False once the user closes it
+    picking = Picking(model)          # create before capturing the simulation
+    vp = GLViewport("my example", width=w, height=h, stage=stage, picking=picking)
+    picking.apply_force(state)       # each substep, after state.clear_forces()
+    vp.show(frame, state)             # after rendering; False once the window closes
     vp.update_camera(dt, ordinal)     # fly the camera, publish if it moved
     vp.close()
 
@@ -67,26 +70,32 @@ class GLViewport:
     scene's Camera prim, starts from its transform at the sealed ``ordinal``, and
     publishes its own moves back to ovstage (see :meth:`update_camera`).
     If ``ordinal`` is omitted, use the stage's current sealed write floor.
+    The required ``newton.viewer.Picking`` controller lets users right-drag
+    rigid bodies with a spring force. Pass the current state to :meth:`show`.
     """
 
     def __init__(self, title: str = "ovnewton", width: int = 1280, height: int = 720,
-                 vsync: bool = False, stage=None, ordinal=None):
+                 vsync: bool = False, stage=None, ordinal=None, *, picking):
         import pyglet
 
         pyglet.options["debug_gl"] = False
         import warp as wp
         from pyglet import gl
 
+        mouse = pyglet.window.mouse
+
         self._pyglet = pyglet
         self._gl = gl
         self._render_width = width
         self._render_height = height
         self._closed = False
+        self.picking = picking
+        self._state = None
 
         self._window = pyglet.window.Window(
             width=width, height=height, caption=title, resizable=True, vsync=vsync)
 
-        # -- input state for camera controls (hooks for future use) ------
+        # -- input state for camera and picking controls -----------------
         self._keys_down: set[int] = set()
         self._look_dx = 0.0
         self._look_dy = 0.0
@@ -107,10 +116,34 @@ class GLViewport:
             self._keys_down.discard(symbol)
 
         @self._window.event
+        def on_mouse_press(x, y, button, modifiers):
+            if button == mouse.RIGHT and self._state is not None:
+                ray = self._mouse_ray(x, y)
+                if ray is not None:
+                    self.picking.pick(self._state, *ray)
+
+        @self._window.event
+        def on_mouse_release(x, y, button, modifiers):
+            if button == mouse.RIGHT:
+                self.picking.release()
+
+        @self._window.event
+        def on_deactivate():
+            self._keys_down.clear()
+            self._look_dx = self._look_dy = 0.0
+            self.picking.release()
+
+        @self._window.event
         def on_mouse_drag(x, y, dx, dy, buttons, modifiers):
-            if buttons & pyglet.window.mouse.LEFT:
+            if buttons & mouse.LEFT:
                 self._look_dx += dx
                 self._look_dy += dy
+            if buttons & mouse.RIGHT:
+                ray = self._mouse_ray(x, y)
+                if ray is None:
+                    self.picking.release()
+                else:
+                    self.picking.update(*ray)
 
         self._window.switch_to()
 
@@ -148,8 +181,9 @@ class GLViewport:
                 self._camera_relay = TransformRelay(stage, camera_paths[:1], ordinal=ordinal)
                 # Start from the current sealed camera pose.
                 self.camera = FlyCamera.from_world_matrix(self._camera_relay.read(ordinal)[0])
+                self.camera.read_lens(stage, camera_paths[0], ordinal)
                 print(f"camera: {camera_paths[0]} — WASD/arrows fly, Q/E down/up, "
-                      "left-drag look, SHIFT boost")
+                      "left-drag look, right-drag bodies, SHIFT boost")
 
     # -- GL helpers ------------------------------------------------------
 
@@ -186,9 +220,10 @@ class GLViewport:
 
     # -- API ---------------------------------------------------------------
 
-    def show(self, pixels) -> bool:
+    def show(self, pixels, state) -> bool:
         """Present one frame (a Warp ``vec4ub`` [H, W] CUDA array).
 
+        ``state`` is the Newton state depicted by the frame, used for picking.
         Returns False once the user closed the window.
         """
         if self._closed:
@@ -196,6 +231,7 @@ class GLViewport:
             return False
         gl = self._gl
 
+        self._state = state
         self._window.switch_to()
         self._window.dispatch_events()
         if self._closed:
@@ -211,16 +247,7 @@ class GLViewport:
 
         # Letterbox viewport preserving the render aspect.
         fb_w, fb_h = self._window.get_framebuffer_size()
-        render_aspect = self._render_width / max(self._render_height, 1)
-        window_aspect = fb_w / max(fb_h, 1)
-        if window_aspect >= render_aspect:
-            vp_h = fb_h
-            vp_w = int(fb_h * render_aspect)
-            vp_x, vp_y = (fb_w - vp_w) // 2, 0
-        else:
-            vp_w = fb_w
-            vp_h = int(fb_w / render_aspect)
-            vp_x, vp_y = 0, (fb_h - vp_h) // 2
+        vp_x, vp_y, vp_w, vp_h = self._image_rect(fb_w, fb_h)
 
         gl.glViewport(0, 0, fb_w, fb_h)
         gl.glClearColor(0.0, 0.0, 0.0, 1.0)
@@ -235,6 +262,27 @@ class GLViewport:
         gl.glBindTexture(gl.GL_TEXTURE_2D, 0)
         self._window.flip()
         return True
+
+    def _image_rect(self, width, height):
+        """Letterboxed image rectangle, shared by presentation and mouse rays."""
+        aspect = self._render_width / self._render_height
+        vp_w = min(width, int(height * aspect))
+        vp_h = min(height, int(width / aspect))
+        return (width - vp_w) // 2, (height - vp_h) // 2, vp_w, vp_h
+
+    def _mouse_ray(self, x, y):
+        if self.camera is None or self._window is None:
+            return None
+        # Pyglet events use logical pixels; the OpenGL viewport uses framebuffer pixels.
+        win_w, win_h = self._window.get_size()
+        fb_w, fb_h = self._window.get_framebuffer_size()
+        if min(win_w, win_h, fb_w, fb_h) <= 0:
+            return None
+        x, y = x * fb_w / win_w, y * fb_h / win_h
+        vp_x, vp_y, vp_w, vp_h = self._image_rect(fb_w, fb_h)
+        if not (vp_x <= x < vp_x + vp_w and vp_y <= y < vp_y + vp_h):
+            return None
+        return self.camera.ray((x - vp_x) / vp_w, (y - vp_y) / vp_h)
 
     # -- camera input accessors ------------------------------------------
 
@@ -266,6 +314,7 @@ class GLViewport:
         return True
 
     def close(self) -> None:
+        self.picking.release()
         if not self._closed:
             self._closed = True
         if self._camera_relay is not None:
@@ -283,19 +332,26 @@ class GLViewport:
 
 
 class FlyCamera:
-    """Fly camera: position + yaw/elevation (Z-up world, USD -Z-forward).
+    """Fly camera with authored roll (Z-up world, USD -Z-forward).
 
     ``elevation`` is degrees above the horizon (negative = looking down);
     ``yaw`` rotates about world Z, 0 = looking along +Y. Controls match
     Newton's ViewerGL/ViewerRTX: WASD/arrows fly in camera space, Q/E move
-    down/up, left-drag looks around, LSHIFT boosts speed.
+    down/up, left-drag looks around, LSHIFT boosts speed. Authored roll is
+    preserved when looking, moving, and generating picking rays.
     """
 
     def __init__(self, position, elevation_deg: float, yaw_deg: float = 0.0):
         self.pos = np.array(position, dtype=np.float64)
         self.elevation = float(elevation_deg)
         self.yaw = float(yaw_deg)
+        self.roll = 0.0  # Degrees; fly controls preserve the authored roll.
         self._velocity = np.zeros(3, dtype=np.float64)
+        # UsdGeom.Camera schema defaults, in tenths of a scene unit.
+        self.focal_length = 50.0
+        self.aperture = np.array([20.955, 15.2908])
+        self.aperture_offset = np.zeros(2)
+        self.orthographic = False
 
     @classmethod
     def from_world_matrix(cls, matrix) -> "FlyCamera":
@@ -311,7 +367,10 @@ class FlyCamera:
             front = front / norm
         elevation = math.degrees(math.asin(max(-1.0, min(1.0, float(front[2])))))
         yaw = math.degrees(math.atan2(float(front[0]), float(front[1])))
-        return cls(mat[3, :3], elevation, yaw)
+        camera = cls(mat[3, :3], elevation, yaw)
+        _, right, up = camera.basis()
+        camera.roll = math.degrees(math.atan2(float(mat[0, :3] @ up), float(mat[0, :3] @ right)))
+        return camera
 
     def basis(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         el = math.radians(self.elevation)
@@ -320,6 +379,9 @@ class FlyCamera:
             [math.cos(el) * math.sin(yaw), math.cos(el) * math.cos(yaw), math.sin(el)])
         right = np.array([math.cos(yaw), -math.sin(yaw), 0.0])
         up = np.cross(right, front)
+        roll = math.radians(self.roll)
+        cosine, sine = math.cos(roll), math.sin(roll)
+        right, up = cosine * right + sine * up, cosine * up - sine * right
         return front, right, up
 
     def world_matrix(self) -> np.ndarray:
@@ -331,6 +393,41 @@ class FlyCamera:
         mat[2, :3] = -front
         mat[3, :3] = self.pos
         return mat
+
+    def read_lens(self, stage, path, ordinal):
+        """Read the authored camera lens once, alongside its initial pose."""
+        import ovstage
+
+        from ovnewton._src._stage import _token_to_string, read_columns
+
+        attrs = ["focalLength", "horizontalAperture", "verticalAperture",
+                 "horizontalApertureOffset", "verticalApertureOffset", "projection"]
+        with ovstage.PathDictionary(stage) as pd:
+            with pd.create_path_list_from_strings([path]) as paths:
+                with stage.query_from_path_list(paths) as query:
+                    columns = read_columns(stage, pd, query, attrs, ordinal)
+            defaults = [self.focal_length, *self.aperture, *self.aperture_offset]
+            values = [float(columns[attr].get(0, [default])[0]) for attr, default in zip(attrs, defaults)]
+            self.focal_length = values[0]
+            self.aperture = np.array(values[1:3])
+            self.aperture_offset = np.array(values[3:5])
+            projection = columns["projection"].get(0)
+            self.orthographic = projection is not None and _token_to_string(pd, projection[0]) == "orthographic"
+
+    def ray(self, u, v):
+        """World-space ray through normalized image coordinates (bottom-left origin)."""
+        import warp as wp
+
+        front, right, up = self.basis()
+        screen = (np.array([u, v]) - 0.5) * self.aperture + self.aperture_offset
+        offset = screen[0] * right + screen[1] * up
+        if self.orthographic:
+            origin, direction = self.pos + 0.1 * offset, front
+        else:
+            origin = self.pos
+            direction = self.focal_length * front + offset
+            direction /= np.linalg.norm(direction)
+        return wp.vec3(*origin), wp.vec3(*direction)
 
     def apply_input(self, viewport: GLViewport, dt: float) -> bool:
         """Consume ``viewport`` input and move the camera over ``dt`` seconds.

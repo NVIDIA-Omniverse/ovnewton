@@ -7,7 +7,7 @@ import numpy as np
 import ovstage
 import pytest
 import warp as wp
-from ovstage import PopulationDomain, population
+from ovstage import population
 
 import ovnewton
 from ovnewton._src import _build, _parse, _stage
@@ -38,7 +38,10 @@ def _byo_model_for(stage, pd):
 
 def test_byo_pose_velocity_roundtrip():
     with ovstage.Stage("byo") as stage, ovstage.PathDictionary(stage) as pd:
-        population.open_usd(stage, CARTPOLE, ordinal=1, domains=PopulationDomain.ALL)
+        population.open_usd_with_desc(
+            stage, CARTPOLE, ordinal=1, time=population.DEFAULT_TIME,
+            descs=(ovnewton.population_desc(),),
+        )
         stage.advance_write_floor(ordinal=1).wait()
         model = _byo_model_for(stage, pd)
 
@@ -64,7 +67,10 @@ def test_byo_uses_requested_population_ordinal():
     import newton
 
     with ovstage.Stage("byo-nondefault-ordinal") as stage:
-        population.open_usd(stage, CARTPOLE, ordinal=4, domains=PopulationDomain.ALL)
+        population.open_usd_with_desc(
+            stage, CARTPOLE, ordinal=4, time=population.DEFAULT_TIME,
+            descs=(ovnewton.population_desc(),),
+        )
         stage.advance_write_floor(ordinal=4).wait()
         builder = newton.ModelBuilder()
         builder.add_body(label="/cartPole/cart")
@@ -79,7 +85,10 @@ def test_byo_rejects_partially_unresolved_body_labels():
     import newton
 
     with ovstage.Stage("byo-invalid") as stage, ovstage.PathDictionary(stage):
-        population.open_usd(stage, CARTPOLE, ordinal=1, domains=PopulationDomain.ALL)
+        population.open_usd_with_desc(
+            stage, CARTPOLE, ordinal=1, time=population.DEFAULT_TIME,
+            descs=(ovnewton.population_desc(),),
+        )
         stage.advance_write_floor(ordinal=1).wait()
         builder = newton.ModelBuilder()
         builder.add_body(label="/cartPole/doesNotExist")
@@ -107,7 +116,10 @@ def test_byo_rejects_incomplete_body_label_map():
 
 def test_byo_rejects_unresolved_absolute_joint_label():
     with ovstage.Stage("byo-invalid-joint") as stage, ovstage.PathDictionary(stage):
-        population.open_usd(stage, CARTPOLE, ordinal=1, domains=PopulationDomain.ALL)
+        population.open_usd_with_desc(
+            stage, CARTPOLE, ordinal=1, time=population.DEFAULT_TIME,
+            descs=(ovnewton.population_desc(),),
+        )
         stage.advance_write_floor(ordinal=1).wait()
         import newton
 
@@ -130,7 +142,10 @@ def test_byo_joint_state_by_path():
 
     REV_JOINT = "/cartPole/cartPoleJoint"  # a real, resolvable cartpole revolute joint prim
     with ovstage.Stage("byo-j") as stage, ovstage.PathDictionary(stage) as pd:
-        population.open_usd(stage, CARTPOLE, ordinal=1, domains=PopulationDomain.ALL)
+        population.open_usd_with_desc(
+            stage, CARTPOLE, ordinal=1, time=population.DEFAULT_TIME,
+            descs=(ovnewton.population_desc(),),
+        )
         stage.advance_write_floor(ordinal=1).wait()
         # NOTE: add_body + add_joint_revolute(parent=-1) yields TWO joints — an implicit
         # FREE joint for the body AND the revolute — so index the revolute explicitly
@@ -174,7 +189,10 @@ def test_byo_joint_state_by_path_batches_same_instance():
 
     REV1, REV2 = "/cartPole/cartPoleJoint", "/cartPole/polePoleJoint"
     with ovstage.Stage("byo-jbatch") as stage, ovstage.PathDictionary(stage) as pd:
-        population.open_usd(stage, CARTPOLE, ordinal=1, domains=PopulationDomain.ALL)
+        population.open_usd_with_desc(
+            stage, CARTPOLE, ordinal=1, time=population.DEFAULT_TIME,
+            descs=(ovnewton.population_desc(),),
+        )
         stage.advance_write_floor(ordinal=1).wait()
         b = newton.ModelBuilder()
         b.add_joint_revolute(

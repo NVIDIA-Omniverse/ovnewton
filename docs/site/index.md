@@ -35,6 +35,9 @@ Home <self>
 getting-started
 concepts
 output-reads
+read-fields
+runtime-inputs
+deformables
 support
 api
 ```

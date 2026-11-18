@@ -5,144 +5,247 @@ SPDX-License-Identifier: Apache-2.0
 
 # Read simulation output
 
-Use `StageBinding.read()` when an application needs Newton data without writing it to ovstage.
+{meth}`ovnewton.StageBinding.read` exposes selected Newton state, control and
+model data without stepping simulation or publishing values to ovstage. Field
+names follow two rules:
 
-Prepare a selection once, then reuse it. In the example, `stage` is the attached ovstage stage, `binding` is its stage binding, and `state` is the current Newton state from the simulation loop. Replace the path with a body path from your stage.
+- **Newton fields.** A snake_case name, such as `body_q`, `joint_q` or
+  `joint_target_ke`, is the name of a Newton array. The field returns Newton's
+  values unchanged: Newton's units, frames and component order. The application
+  owns any conversion.
+- **Standard fields.** A camelCase name, such as `position` or `jointPosition`,
+  is a standard field. Per-axis joint fields use the units of the matching USD
+  joint attributes: degrees on angular axes, and the authored body order. All
+  other values keep Newton's units.
 
-```python
+The [read field reference](read-fields.md) lists every field with its objects,
+source arrays, units, frame, layout, device and storage.
+{func}`ovnewton.read_fields` returns the same declarations as
+{class}`ovnewton.ReadField` objects.
+
+## Select and discover
+
+Prepare a reusable {class}`ovnewton.Query` from explicit paths, an ovstage query,
+or an {class}`ovnewton.SimObjectType`. See the enum for object types and their
+meaning. Types may also narrow a path/query selection. Invalid explicit paths
+raise an error; unrelated prims in an ovstage query are ignored.
+
+`query.attributes` contains field-name tokens for the selected topology. Resolve
+them through `ovstage.PathDictionary`. This is candidate discovery, not a check
+that a particular state allocates optional outputs. Only
+{attr}`ovnewton.ObjectScope.ALL` is supported; active and changed-since queries
+are unavailable. Recreate the binding and queries after structural changes.
+
+This CPU example uses the packaged cartpole scene. The code below is executed
+by the documentation tests, including checks of native values and row mappings.
+
+```{testcode} read-output
+from importlib.resources import files
+
+import newton
+import numpy as np
+import ovnewton
 import ovstage
 import warp as wp
+from ovstage import population
 
-query = binding.query(paths=["/World/Robot/base"])
-result = binding.read(
-    state,
-    query=query,
-    attributes=("body_q", "body_qd", "mass"),
-)
-
-with ovstage.PathDictionary(stage) as path_dictionary:
-    for group in result.groups:
-        attribute = path_dictionary.token_to_string(group.attribute)
-        prim_paths = path_dictionary.get_path_strings(group.prim_list)
-        tensors = [
-            wp.from_dlpack(group.dlpack(i))
-            for i in range(group.tensor_count)
-        ]
-        data_rows = [
-            group.data_row_index(i)
-            for i in range(group.prim_count)
-        ]
-```
-
-## Select an object type
-
-Pass `object_type` without a path query to select every bound object of one type:
-
-```python
-import ovnewton
-
-query = binding.query(
-    object_type=ovnewton.SimObjectType.RIGID_BODY,
-    scope=ovnewton.ObjectScope.ALL,
-)
-```
-
-The supported types are `RIGID_BODY`, `ARTICULATION_LINK`, `ARTICULATION_JOINT`, `ARTICULATION`, and `PHYSICS_SCENE`. The first four names and numeric values match the ovphysx output-read API. `PHYSICS_SCENE` is an ovnewton extension for reading effective gravity.
-
-`RIGID_BODY` selects bodies outside an articulation. `ARTICULATION_LINK` selects bodies in an articulation. `ARTICULATION_JOINT` selects authored articulation joints with readable coordinates or velocities; it excludes generated free joints. `ARTICULATION` selects prims with `PhysicsArticulationRootAPI`. `PHYSICS_SCENE` selects the effective physics scene.
-
-A type can also narrow `paths` or an ovstage query. An explicit path with the wrong type is an error. An ovstage query may match other prims; those prims are ignored.
-
-Each group from a typed query reports that type through `group.object_type`, as ovphysx does. A query without `object_type` may combine several types, so its groups report `None`.
-
-Only `ObjectScope.ALL` is supported. It is a reusable topology snapshot that remains valid until the binding's structure changes. `ObjectScope.ACTIVE` raises `NotImplementedError`. Ovnewton does not yet expose changed-since selection.
-
-## Native output contract
-
-Native fields return values as Newton stores them, with the same units, frames, component order, and meaning. The shared `jointPosition` and `jointVelocity` fields convert angular axes to degrees and degrees per second. See Newton's [State API](https://newton-physics.github.io/newton/1.7.0/api/_generated/newton.State.html), [conventions](https://newton-physics.github.io/newton/1.7.0/concepts/conventions.html), and [articulation model](https://newton-physics.github.io/newton/1.7.0/concepts/articulations.html) for details.
-
-| Attribute | Object | Ovnewton group layout |
-| --- | --- | --- |
-| `body_q` | Rigid body or articulation link | one `float32x7` value per body |
-| `body_qd` | Rigid body or articulation link | one `float32x6` value per body |
-| `position` | Rigid body or articulation link | one world-space `float32x3` value per body |
-| `orientation` | Rigid body or articulation link | one world-space XYZW `float32x4` value per body |
-| `linearVelocity` | Rigid body or articulation link | one world-space `float32x3` value per body |
-| `angularVelocity` | Rigid body or articulation link | one world-space `float32x3` value per body |
-| `linearAcceleration` | Rigid body or articulation link | one world-space `float32x3` value per body, when `State.body_qdd` is allocated |
-| `angularAcceleration` | Rigid body or articulation link | one world-space `float32x3` value per body, when `State.body_qdd` is allocated |
-| `gravity` | Effective physics scene | one stage-space `float32x3` value |
-| `mass` | Rigid body or articulation link | one `float32` value per body |
-| `inertia` | Rigid body or articulation link | one row-major `float32x9` inertia matrix per body |
-| `centerOfMassPosition` | Rigid body or articulation link | one local-frame `float32x3` value per body |
-| `shapeCount` | Rigid body or articulation link | one `int32` value per body |
-| `friction` | Rigid body or articulation link | one padded `float32xN` row per body |
-| `restitution` | Rigid body or articulation link | one padded `float32xN` row per body |
-| `rootPosition` | Articulation root | one world-space `float32x3` value per articulation |
-| `rootOrientation` | Articulation root | one world-space XYZW `float32x4` value per articulation |
-| `rootLinearVelocity` | Articulation root | one world-space `float32x3` value per articulation |
-| `rootAngularVelocity` | Articulation root | one world-space `float32x3` value per articulation |
-| `jointPosition` | Articulation joint | one or more per-axis groups; angular axes use degrees |
-| `jointVelocity` | Articulation joint | one or more per-axis groups; angular axes use degrees per second |
-| `jointPositionTarget` | Articulation joint | current position targets from `Control`; angular axes use degrees |
-| `jointVelocityTarget` | Articulation joint | current velocity targets from `Control`; angular axes use degrees per second |
-| `jointStiffness` | Articulation joint | position-drive stiffness per axis; angular axes use force per degree |
-| `jointDamping` | Articulation joint | velocity-drive damping per axis; angular axes use force per degree per second |
-| `jointLimit` | Articulation joint | interleaved low/high values per axis; angular axes use degrees |
-| `jointMaxVelocity` | Articulation joint | one limit per axis; angular axes use degrees per second |
-| `jointMaxForce` | Articulation joint | one effort limit per axis |
-| `jointArmature` | Articulation joint | one armature value per axis |
-| `jointFriction` | Articulation joint | one friction-effort value per axis |
-| `joint_q` | Joint | one or more `float32xN` groups, partitioned by coordinate width `N` |
-| `joint_qd` | Joint | one or more `float32xN` groups, partitioned by velocity width `N` |
-
-`body_q` is `[px, py, pz, qx, qy, qz, qw]`: the body origin's world pose. `body_qd` is `[vx, vy, vz, wx, wy, wz]`: center-of-mass linear velocity followed by angular velocity, both in world space. Native `joint_q` and `joint_qd` values use Newton generalized coordinates. Their angles use radians and angular rates use radians per second. Free and distance joint velocities use the parent joint's frame. D6 joints store linear coordinates before angular coordinates.
-
-The split pose and velocity fields have the same values as their `body_q` and `body_qd` components. The acceleration fields similarly split `State.body_qdd`; request that optional Newton state field before creating the state. Split fields are produced by a device kernel for the selected rows only and do not make a host round trip.
-
-`gravity` aliases `Model.gravity` for the first populated `PhysicsScene`. It contains the effective direction and magnitude after ovnewton applies scene defaults, stage length units, and `NewtonSceneAPI.gravityEnabled`. A stage without a `PhysicsScene` has no scene output path, even though Newton still has a default gravity value.
-
-For a caller-owned model, `gravity` borrows the row for the bound bodies' Newton world, including the global world. The mapping is resolved when the binding is created. A model with multiple gravity rows must have bound bodies in exactly one world; otherwise a gravity read raises `ValueError`. Other output reads remain available.
-
-`mass`, `inertia`, and `centerOfMassPosition` expose the final values in `Model.body_mass`, `Model.body_inertia`, and `Model.body_com`. Inertia is relative to the center of mass and expressed in the body frame. The center-of-mass position is an offset in the body frame. Reading these values does not normalize units. Each group aliases its model array; no value is copied.
-
-Ovnewton does not expose `centerOfMassOrientation`. Newton stores a complete body-frame inertia matrix rather than a separate principal-axis orientation, so reporting one would require a new shared decomposition contract.
-
-`friction` and `restitution` expose `Model.shape_material_mu` and `Model.shape_material_restitution` in Newton's native shape order. Each row is padded with zeros to the largest `shapeCount` in the query; `dtype.lanes` is that width. Newton stores one friction coefficient, so ovnewton does not report it as distinct `staticFriction` and `dynamicFriction` values. These fields are gathered on the model device.
-
-Material reads support at most 255 shapes per selected body, matching ovstage's DLTensor lane limit. A wider material read raises `ValueError`; `shapeCount` and other body fields remain readable. Selecting only bodies within the limit still works.
-
-The four articulation-root fields report the pose and velocity of the root body. Select the prim that has `PhysicsArticulationRootAPI`, not the root body's path. Ovnewton preserves that authored prim path as the Newton articulation label. The split values are gathered into dense rows on the model device.
-
-`jointPosition` and `jointVelocity` use the shared per-axis convention from ovphysx. Linear axes stay in the model's length units. Angular positions use degrees and angular velocities use degrees per second. Signed values follow the authored USD body order, even when Newton has reordered a world-attached joint. Revolute, prismatic, and scalar-coordinate D6 joints provide `jointPosition`. Spherical position is not returned because Newton stores it as a quaternion, but its three angular velocities are available. These values are converted on the model device. Use `joint_q` and `joint_qd` when an application needs Newton's generalized-coordinate layout, parent-child order, and radians.
-
-Joint targets come from the `Control` passed to the same read; ovnewton does not substitute model defaults. `jointPositionTarget` follows the same supported position axes as `jointPosition`. `jointVelocityTarget` follows `jointVelocity`. Both use authored body order. Joint properties come from the connected model. Angular targets, limits, and maximum velocities use degrees. Angular stiffness and damping are converted from Newton's per-radian values to per-degree values. Effort limits, armature, and friction are unchanged. `jointLimit` stores `[low, high]` for each axis, so a group with `N` axes has `2N` lanes. An unlimited bound is reported as the positive or negative maximum `float32` value.
-
-Newton has one friction-effort value per joint axis, so ovnewton does not expose separate joint static and dynamic friction fields. It also does not expose `jointActuationForce` because `Control.joint_f` is an input, not measured solver output. Newton's target mode does not carry the same force-versus-acceleration meaning as the shared `jointDriveType`, so that field is not exposed either.
-
-The `state` argument may be omitted when a read requests only model-backed fields. State-backed fields still require it. The `control` argument is required only for target fields.
-
-Lengths use the Newton model's units. When ovnewton builds the model, it uses the stage's length units. For example, a centimetre stage returns positions in centimetres and linear velocities in centimetres per second, not metres.
-
-Rod-joint `joint_q` and `joint_qd` values are outside this contract: Newton does not use them as generalized positions and velocities. Read the rod segments' `body_q` and `body_qd` instead.
-
-Generated free joints may have Newton labels instead of USD prim paths. To identify a standalone rigid body by its USD path, select the body and read `body_q` or `body_qd`.
-
-A read may return several groups because joints can have different numbers of coordinates or axes. Each group contains one attribute and one width, so several groups may use the same attribute name. `group.tensor(0).dtype.lanes` gives the width. The raw `DLTensor` has one dimension: `shape[0]` gives the number of rows, and `dtype.lanes` gives the number of values in each row.
-
-`query.attributes` lists the fields available for the selected objects. `query.object_type` and `query.scope` report the selection contract. An unknown attribute is an error. A known attribute returns no group when none of the selected objects provide it. Requesting no attributes also returns no groups. Selecting a path that is not a readable body, articulation root, physics scene, or joint is an error. Fixed joints are not readable because they have no coordinates.
-
-Groups are read-only. Native fields point directly to the supplied Newton state or connected model; split fields own a result buffer. The current `ordinal == 0` and zero-valued metadata are placeholders; they do not identify a simulation step. The application owns Newton stepping, so it must call `read()` with the state and control from one sample and prevent them from changing while the read is being issued. A public tick/time/ordinal contract still needs agreement. Keep borrowed arrays unchanged until every consumer has finished reading them.
-
-`group.data_row_index(i)` maps logical prim `i` to its tensor row. Therefore, `prim_paths[i]` names the prim, and `data_rows[i]` gives its corresponding row in each group tensor. Sparse groups may also expose the row map through `data_index_dlpack()`.
-
-CPU data is ready when `read()` returns. On CUDA, call `read()` on the Warp stream that last wrote the requested state or model arrays, or first make the current stream wait for that work. The returned event covers only work ordered on that stream. A consumer on another CUDA stream must wait for the reported event on its own `consumer_stream`:
-
-```python
-if group.cuda_sync.wait_event:
-    event = wp.Event(
-        device=binding.model.device,
-        cuda_event=group.cuda_sync.wait_event,
+ovnewton.register_usd_schemas()
+with wp.ScopedDevice("cpu"), ovstage.Stage() as stage:
+    scene = str(files("ovnewton.examples").joinpath("assets/scene_cartpole.usda"))
+    population.open_usd_with_desc(
+        stage, scene, ordinal=1, time=population.DEFAULT_TIME,
+        descs=(ovnewton.population_desc(),),
     )
-    consumer_stream.wait_event(event)
+    stage.advance_write_floor(1).wait()
+    binding = ovnewton.attach_ovstage(stage)
+    model = binding.model
+    state = model.state()
+    newton.eval_fk(model, model.joint_q, model.joint_qd, state)
+    query = binding.query(object_type=ovnewton.SimObjectType.ARTICULATION_JOINT)
+
+    with ovstage.PathDictionary(stage) as pd:
+        fields = {pd.token_to_string(token): token for token in query.attributes}
+        result = binding.read(state, query=query, attributes=(fields["joint_q"],))
+        joints = {path: j for j, path in enumerate(model.joint_label)}
+        starts = model.joint_q_start.numpy()
+        for group in result.groups:
+            paths = pd.get_path_strings(group.prim_list)
+            for column in group.columns:
+                width = int(column.tensor(0).dtype.lanes)
+                rows = column.array(0).reshape(-1, width)  # read-only CPU view
+                for i, path in enumerate(paths):
+                    row = rows[column.data_row_index(i)]
+                    j = joints[path]
+                    np.testing.assert_array_equal(row, state.joint_q.numpy()[starts[j]:starts[j + 1]])
+                    assert not row.flags.writeable
 ```
+
+Omit `query` to select all bound output objects. Pass `control=control` for drive
+targets or commanded joint effort; control-only and model-only reads may omit
+`state`. Unknown fields raise an error;
+known fields with no compatible selected objects produce no groups.
+
+## Available fields
+
+The [read field reference](read-fields.md) is the complete list. It is
+generated from `contracts/read_fields.json`, the same declarations that drive
+the runtime and {func}`ovnewton.read_fields`. Tests check every declaration
+against actual reads. The sections below explain the main field families. All
+value components are `float32` except `shapeCount` (`int32`). Joint state,
+control and DOF-property source arrays must be contiguous `float32` arrays.
+Other layouts raise an error rather than being misread.
+
+Body fields apply to rigid bodies and articulation links. `root*` fields apply
+to authored articulation-root prims, `gravity` to the effective physics scene,
+and joint fields to bound joint paths. Convenience joint fields require an
+articulation joint; generated free-joint labels are not generally USD prim paths.
+Fixed joints have no readable coordinates; rod generalized coordinates are
+outside this contract. Read rod-segment body state instead.
+
+**Bodies and scene.** `body_q` is world body-origin XYZ followed by an XYZW
+quaternion. `body_qd` is world COM linear XYZ followed by angular XYZ velocity.
+Split pose/velocity fields preserve those meanings; acceleration splits optional
+`State.body_qdd` with the same world/COM reference. The caller must allocate it
+and use a solver that populates it. Lengths use model units (stage units for an
+ovnewton-built model), time is seconds, mass uses model mass units, angular
+velocity/acceleration uses rad/s and rad/s². Inertia is a row-major body-frame
+matrix about COM; `centerOfMassPosition` is a body-frame offset. `root*` uses the
+root body's origin/COM and the authored root prim's identity. `gravity` borrows
+the resolved `Model.gravity` world row; no scene or an ambiguous multi-world
+mapping prevents this read.
+
+**Shapes.** Counts come from `Model.shape_body`. Friction and restitution are
+unitless, ordered by Newton shape index within each body and zero-padded to the
+maximum selected shape count. Zero shapes produces no material column. More than
+255 shapes on a selected body raises an error for material reads.
+
+**Joints.** `joint_q` uses `Model.joint_q_start` coordinate spans; `joint_qd`
+uses `Model.joint_qd_start` velocity-DOF spans. Prismatic/revolute joints have
+one displacement/angle and one rate. Ball joints have an XYZW quaternion and
+three angular velocity components, not quaternion derivatives. Free/distance
+joints have XYZ + XYZW relative joint pose and six velocity DOFs, with child-COM
+linear velocity then angular velocity in the joint parent frame. D6 stores
+configured linear axes before angular coordinates/DOFs, following Newton's
+rotation sequence rather than a generic XYZ Euler convention. Resolve paths
+through `Model.joint_label`; inspect `joint_type`, `joint_dof_dim`, `joint_axis`
+and parent/child joint frames to interpret axes. See Newton's
+[articulation conventions](https://newton-physics.github.io/newton/1.7.0/concepts/articulations.html).
+
+**Per-axis joint fields.** The angular unit of a standard joint field depends
+on the quantity:
+
+- `jointPosition`, `jointVelocity`, `jointPositionTarget`,
+  `jointVelocityTarget`, `jointLimit` and `jointMaxVelocity` use degrees or
+  degrees/s.
+- `jointStiffness` and `jointDamping` use effort/degree and effort·s/degree.
+- `jointMaxForce`, `jointArmature` and `jointFriction` are not converted.
+
+Linear axes, such as a prismatic joint's axis, are never converted.
+Positions, velocities, targets and limits also follow the authored USD body
+order. Position and position-target reads support prismatic, revolute and
+scalar-coordinate D6 joints, not spherical positions. Targets read the supplied
+`Control`; position-target indexing uses `Model.joint_target_q_start`.
+The mapping accounts for both endpoint order and axis direction, including
+caller-owned models built with older Newton importers. `jointLimit` interleaves
+low/high per axis, reverses bounds when a coordinate changes sign, and reports
+unlimited bounds as ±maximum `float32`.
+
+For Newton's own units and body order, read the Newton fields instead:
+`joint_q`, `joint_qd`, `joint_target_q`, `joint_target_qd`, `joint_target_ke`,
+`joint_target_kd`, `joint_limit_lower`, `joint_limit_upper`,
+`joint_velocity_limit`, `joint_effort_limit`, `joint_armature` and
+`joint_friction`. For bodies, the Newton fields are `body_q`, `body_qd`,
+`body_qdd`, `body_mass`, `body_inertia` and `body_com`.
+
+**Commanded joint effort.** `joint_f` reads one commanded force/torque value per
+supported joint degree of freedom (DOF) from `Control.joint_f`. A hinge has one
+torque entry, a slider one force entry, and a ball joint three torque components.
+Reading it requires `control`, not `state`; the joint need not be moving.
+
+The source is a contiguous `float32` array indexed by `Model.joint_qd_start`.
+It shares DOF indexing with `State.joint_qd`, not its ownership or velocity units.
+Selected joints are grouped by their DOF count `N`, with `N` components per data
+row (`float32xN`). The read preserves Newton's force/torque units, axes, signs
+and component order; no conversion to authored USD body order is performed.
+Free/distance joint
+wrenches use world-frame linear force followed by torque about the child COM,
+not the joint-parent frame used by their velocities. Fixed joints have no DOFs.
+This is an input buffer, not measured effort, actuator output or a solver result.
+Reading it does not step a solver, apply forces or clear the control. The caller
+owns writes and resets, including `Control.clear()`. Borrowing, selection gathers
+and result lifetime follow the native joint rules below.
+
+`jointMaxForce` reads the resolved symmetric effort limit from
+`Model.joint_effort_limit`. For imported MuJoCo joints, enabled actuator-force
+ranges contribute to this value, and a tighter USD drive `maxForce` takes
+precedence. See {ref}`mujoco-joint-parameters` for the import rules and supported
+joint types.
+
+## Layout, storage and lifetime
+
+Each {class}`ovnewton.ReadGroup` identifies shared, ordered prim rows and contains
+one or more {class}`ovnewton.ReadColumn` objects. A column carries one attribute's
+values, layout, row mapping and CUDA readiness. For example, `body_q` and
+`body_qd` share one group for the same selected bodies despite their different
+widths. Groups are ordered by first occurrence in the requested fields; columns
+within each group follow request order, with duplicate fields removed.
+
+Each column has one packed DLTensor: shape `(R,)`, 32-bit
+components, `N` lanes, compact strides and zero byte offset. Row stride is `4*N`
+bytes. Adapters expand lanes into scalar dimensions. Results and optional
+`uint32` row maps reside on `binding.model.device`. Several groups can carry the
+same field with different widths. `group.prim_list[i]` identifies logical prim
+`i`; always use each column's `data_row_index(i)` to locate its storage row.
+Two columns in the same group can have different row maps. `R` can exceed the
+selected prim count. Explicit path order is preserved within each group.
+
+Native body reads borrow full buffers with row indirection. Native joint and
+unchanged DOF-property reads borrow a source span only when all selected widths
+match and scalar offsets align to that width; gaps/reordering use a row map.
+Otherwise they gather into dense device buffers. Split/root fields always
+extract, materials gather/pad, and convenience joint fields gather/convert.
+These operations allocate per-read output; they do not require a host round trip.
+Borrowing avoids copying values, but still creates descriptors and CUDA events.
+
+Groups, columns and managed DLPack exports retain storage. Retention keeps an allocation
+alive; it does **not** freeze borrowed values. Prevent solver steps, state-buffer
+reuse or model/control writes until every reader finishes. Retain the result or
+group or column through asynchronous completion, including when using raw NumPy/tensor
+views. Never mutate exported values or indices. Copy explicitly for history.
+Results need no release; later reads do not overwrite per-read gathered buffers.
+Keep the stage/binding alive while resolving path/token handles.
+
+CPU values are ready on return. On CUDA, issue reads on the Warp stream that
+last wrote the sources, or make the current stream wait for that work first.
+A consumer on another stream must wait for `column.cuda_sync.wait_event` before
+using `wp.from_dlpack(column.dlpack(0))` and its optional
+`column.data_index_dlpack()` map. The event reports producer readiness, not
+consumer completion. Column ordinals, semantics and generation metadata are zero
+placeholders, not sample timestamps, representation IDs or invalidation tokens.
+
+Particle/deformable state, contacts and measured joint forces are not exposed.
+There are no separate static/dynamic friction, principal-axis COM orientation or
+drive-type fields.
+
+{func}`ovnewton.read_fields` gives static metadata for each field. This includes
+units, frame, conversion, component names, layout and storage class. Its
+values are text for people to read, not a typed schema. Do not parse them.
+
+The catalog cannot describe a particular read. Inspect the result for those
+details. The actual lane count, row mapping and device are in the group and
+column layouts. A `borrowed_or_gathered` field is borrowed only when the
+selection allows it. The result does not say which one happened, so treat it as
+borrowed and follow the lifetime rules above. Do not infer formats
+from shared names across engines.
+
+### Migrating from flat output groups
+
+Attribute and buffer accessors now live on `group.columns`, not on the group.
+Move `group.attribute`, `group.tensor(0)`, `group.dlpack(0)`, row-map accessors,
+`meta` and `cuda_sync` into an inner loop over columns. Keep prim lookup and
+`prim_index(i)` on the group. Metadata types are now
+{class}`ovnewton.ReadColumnMeta` and {class}`ovnewton.ReadColumnCudaSync`.
+
+This follows OVStage's group/column separation, but not its storage-release
+protocol: ovnewton does not pin stage storage and needs no explicit release.
+Its packed Newton tensor layouts and units are unchanged.

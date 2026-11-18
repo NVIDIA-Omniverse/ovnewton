@@ -1,98 +1,68 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import math
 from dataclasses import replace
 
 import numpy as np
 import pytest
 
-from ovnewton._src import _deformables
+from ovnewton._src import _build, _deformables
+
+from .deformable_helpers import CABLE, VOLUME, populate, read_points, read_test_deformables, supported_surface
 
 
-def _read_test_deformables():
+@pytest.mark.parametrize("family", ["cable", "cloth", "volume"])
+def test_imported_deformable_builder_outlives_stage(family, warp_device):
+    import newton
     import ovstage
-    from ovstage import PopulationDomain, population
 
-    usda = """#usda 1.0
-def Xform "World" {
-    def Material "Material" (
-        prepend apiSchemas = [
-            "PhysicsCurvesDeformableMaterialAPI",
-            "PhysicsSurfaceDeformableMaterialAPI",
-            "PhysicsVolumeDeformableMaterialAPI"
-        ]
-    ) {
-        float physics:youngsModulus = 1200
-        float physics:curvesTwistStiffness = 13
-        float physics:surfaceStretchStiffness = 11
-    }
-    def Xform "Cable" (prepend apiSchemas = ["PhysicsDeformableBodyAPI", "MaterialBindingAPI"]) {
-        rel material:binding:physics = </World/Material>
-        def BasisCurves "Sim" (
-            prepend apiSchemas = ["PhysicsCurvesDeformableSimAPI"]
-        ) {
-            uniform token type = "linear"
-            uniform token wrap = "nonperiodic"
-            int[] curveVertexCounts = [3]
-            point3f[] points = [(0, 0, 2), (0, 0, 1), (0, 0, 0)]
-            normal3f[] normals = [(1, 0, 0), (1, 0, 0), (1, 0, 0)]
-            vector3f[] velocities = [(0, 0, 0), (0, 0, 0), (0, 0, 0)]
-            float[] physics:masses = [1, 1, 1]
-            uniform token physics:masses:elementType = "point"
-            float[] physics:thicknesses = [0.02]
-            uniform token physics:thicknesses:elementType = "constant"
-        }
-    }
-    def Xform "Surface" (prepend apiSchemas = ["PhysicsDeformableBodyAPI", "MaterialBindingAPI"]) {
-        rel material:binding:physics = </World/Material>
-        def Mesh "Sim" (
-            prepend apiSchemas = ["PhysicsSurfaceDeformableSimAPI"]
-        ) {
-            point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
-            int[] faceVertexCounts = [3]
-            int[] faceVertexIndices = [0, 1, 2]
-            vector3f[] velocities = [(0, 1, 0), (0, 2, 0), (0, 3, 0)]
-            float[] physics:masses = [0.5]
-            uniform token physics:masses:elementType = "face"
-            float[] physics:thicknesses = [0.01, 0.01, 0.01]
-            uniform token physics:thicknesses:elementType = "point"
-        }
-    }
-    def Xform "Volume" (prepend apiSchemas = ["PhysicsDeformableBodyAPI", "MaterialBindingAPI"]) {
-        rel material:binding:physics = </World/Material>
-        def TetMesh "Sim" (
-            prepend apiSchemas = ["PhysicsVolumeDeformableSimAPI"]
-        ) {
-            point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)]
-            int4[] tetVertexIndices = [(0, 1, 2, 3)]
-            vector3f[] velocities = [(0, 0, 1), (0, 0, 2), (0, 0, 3), (0, 0, 4)]
-            float[] physics:masses = [4]
-            uniform token physics:masses:elementType = "tetrahedron"
-        }
+    import ovnewton
+
+    cloth = """#usda 1.0
+def Xform "Cloth" (prepend apiSchemas = ["PhysicsDeformableBodyAPI"]) {
+    float physics:density = 80
+    double3 xformOp:translate = (2, 3, 4)
+    uniform token[] xformOpOrder = ["xformOp:translate"]
+    def Mesh "Sim" (prepend apiSchemas = ["PhysicsSurfaceDeformableSimAPI"]) {
+        point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
+        vector3f[] velocities = [(0, 0, 1), (0, 0, 2), (0, 0, 3)]
+        int[] faceVertexCounts = [3]
+        int[] faceVertexIndices = [0, 1, 2]
+        float[] physics:thicknesses = [0.01]
+        uniform token physics:thicknesses:elementType = "constant"
     }
 }
 """
+    builder = newton.ModelBuilder()
+    with ovstage.Stage("deformable-snapshot-lifetime") as stage:
+        populate(stage, {"cable": CABLE, "cloth": cloth, "volume": VOLUME}[family])
+        ovnewton.add_ovstage(builder, stage)
 
-    with ovstage.Stage("ovnewton-deformable-inputs") as stage, ovstage.PathDictionary(stage) as pd:
-        population.open_usd_from_string_with_desc(
-            stage,
-            usda,
-            ordinal=1,
-            time=math.nan,
-            descs=(
-                population.Desc(domains=PopulationDomain.PHYSICS),
-                _deformables.population_desc(),
-            ),
-        )
-        stage.advance_write_floor(ordinal=1).wait()
-        values = _deformables.read_deformables(stage, pd, 1)
-
-    return values
+    # Finalization must not need the now-closed stage or its borrowed columns.
+    builder.color(include_bending=True)
+    model = builder.finalize(device=warp_device)
+    if family == "cable":
+        rods = np.flatnonzero(model.joint_type.numpy() == int(newton.JointType.ROD))
+        assert len(rods) == 1
+        assert model.body_count == 3
+        assert model.particle_count == 0
+        # Native rod body frames are at the transformed segment midpoints.
+        bodies = np.flatnonzero(np.any(model.body_qd.numpy()[:, :3] != 0, axis=1))
+        np.testing.assert_allclose(model.body_q.numpy()[bodies, :3], [[2.5, 3, 4], [4, 3, 4]], atol=1e-6)
+        np.testing.assert_allclose(model.body_qd.numpy()[bodies, :3], [[0, 1, 0]] * 2)
+    elif family == "cloth":
+        assert model.tri_count == 1
+        np.testing.assert_allclose(model.particle_q.numpy(), [[2, 3, 4], [3, 3, 4], [2, 4, 4]])
+        np.testing.assert_allclose(model.particle_qd.numpy(), [[0, 0, 1], [0, 0, 2], [0, 0, 3]])
+        assert sum(model.particle_mass.numpy()) == pytest.approx(0.4)
+    else:
+        assert model.tet_count == 1
+        np.testing.assert_allclose(model.particle_q.numpy(), [[2, 3, 4], [3, 3, 4], [2, 4, 4], [2, 3, 5]])
+        np.testing.assert_allclose(model.particle_mass.numpy(), [2.5] * 4)
 
 
 def test_reads_all_canonical_deformable_families():
-    values = _read_test_deformables()
+    values = read_test_deformables()
 
     assert [value.family.value for value in values] == ["curves", "surface", "volume"]
     assert values[0].body_path == "/World/Cable"
@@ -110,190 +80,109 @@ def test_rejects_wrong_element_frequency_length():
         _deformables._element_field("masses", [1.0, 2.0], "point", {"point": 3}, path="/World/Surface/Sim")
 
 
-def _supported_surface(value: _deformables.DeformableInput) -> _deformables.DeformableInput:
-    return replace(
-        value,
-        mass=None,
-        density=80.0,
-        material={
-            "density": None,
-            "surfaceStretchStiffness": 11.0,
-            "surfaceBendStiffness": 5.0,
-        },
-        masses=_deformables.ElementField(np.empty(0, dtype=np.float32), ""),
-        thicknesses=_deformables.ElementField(np.asarray([0.01], dtype=np.float32), "constant"),
-    )
-
-
-def test_builds_supported_identity_transform_surface():
+@pytest.mark.parametrize("problem", ["degenerate", "body-density", "material-density"])
+def test_invalid_surface_does_not_append_an_earlier_cable(problem):
     import newton
 
-    value = _supported_surface(_read_test_deformables()[1])
+    cable, surface, _ = read_test_deformables()
+    cable = replace(cable, material={}, masses=_deformables.ElementField(np.empty(0, dtype=np.float32), ""))
+    surface = supported_surface(surface)
+    if problem == "degenerate":
+        surface = replace(surface, points=np.zeros_like(surface.points))
+        error, message = _deformables.OvstageContractError, "zero-area triangle"
+    else:
+        if problem == "body-density":
+            surface = replace(surface, density=0)
+        else:
+            surface = replace(surface, material={"density": -1})
+        error, message = _deformables.InvalidPhysicsError, "density must be finite and positive"
     builder = newton.ModelBuilder()
-
-    build_info = _deformables.build_deformables(builder, [value])
-
-    assert builder.particle_count == 3
-    assert builder.tri_count == 1
-    assert len(build_info.surfaces) == 1
+    with pytest.raises(error, match=message):
+        _build.build_deformables(builder, [cable, surface])
+    assert builder.body_count == builder.joint_count == builder.particle_count == 0
+    assert builder.curve_label == builder.surface_label == []
 
 
-@pytest.mark.parametrize("build_path", ["build_model", "attach_ovstage", "caller_owned"])
-@pytest.mark.parametrize("device", ["cpu", "cuda:0"])
-def test_surface_points_publish_after_model_finalization(build_path, device, monkeypatch):
+@pytest.mark.parametrize("compose_builder", [False, True])
+def test_cables_and_volumes_share_a_binding(warp_device, compose_builder):
     import newton
     import ovstage
     import warp as wp
-    from ovstage import PopulationDomain, population
 
     import ovnewton
-    from ovnewton._src import _build
 
-    if device == "cuda:0" and not wp.is_cuda_available():
-        pytest.skip("CUDA is unavailable")
-
-    usda = """#usda 1.0
-def Xform "World" {
-    def Xform "Surface" (
-        prepend apiSchemas = ["PhysicsDeformableBodyAPI"]
-    ) {
-        float physics:density = 80
-        def Mesh "Sim" (
-            prepend apiSchemas = ["PhysicsSurfaceDeformableSimAPI"]
-        ) {
-            point3f[] points = [(0, 0, 0), (1, 0, 0), (0, 1, 0)]
-            int[] faceVertexCounts = [3]
-            int[] faceVertexIndices = [0, 1, 2]
-            float[] physics:thicknesses = [0.01]
-            uniform token physics:thicknesses:elementType = "constant"
-        }
-    }
-    def Xform "SecondSurface" (
-        prepend apiSchemas = ["PhysicsDeformableBodyAPI"]
-    ) {
-        float physics:density = 80
-        def Mesh "Sim" (
-            prepend apiSchemas = ["PhysicsSurfaceDeformableSimAPI"]
-        ) {
-            point3f[] points = [(2, 0, 0), (3, 0, 0), (2, 1, 0)]
-            int[] faceVertexCounts = [3]
-            int[] faceVertexIndices = [0, 1, 2]
-            float[] physics:thicknesses = [0.01]
-            uniform token physics:thicknesses:elementType = "constant"
-        }
-    }
-}
-"""
-
-    with wp.ScopedDevice(device), ovstage.Stage("ovnewton-deformable-binding") as stage:
-        population.open_usd_from_string_with_desc(
-            stage,
-            usda,
-            ordinal=1,
-            time=math.nan,
-            descs=(
-                population.Desc(domains=PopulationDomain.ALL),
-                _deformables.population_desc(),
-            ),
-        )
-        stage.advance_write_floor(ordinal=1).wait()
-
-        if build_path == "caller_owned":
-            builder = newton.ModelBuilder()
-            result = ovnewton.add_ovstage(builder, stage)
-            builder.color(include_bending=True)
-            model = builder.finalize(skip_validation_joints=result.has_orphan_joints)
-            del builder
-            binding = ovnewton.attach_ovstage(stage, model=model)
-        elif build_path == "build_model":
+    volume_scene = VOLUME.removeprefix("#usda 1.0\n").replace('"Material"', '"VolumeMaterial"')
+    volume_scene = volume_scene.replace("</Material>", "</VolumeMaterial>")
+    with wp.ScopedDevice(warp_device), ovstage.Stage("mixed-deformables") as stage:
+        populate(stage, CABLE + volume_scene)
+        cable_points = read_points(stage, "/Cable/Sim", 1).copy()
+        volume_points = read_points(stage, "/Volume/Sim", 1).copy()
+        if compose_builder:
+            source = newton.ModelBuilder()
             with ovstage.PathDictionary(stage) as pd:
-                model = _build.build_model(stage, pd)
-            binding = ovnewton.StageBinding(stage, model)
+                values = _deformables.read_deformables(stage, pd, 1)
+            _build.build_deformables(source, values)
+            combined = newton.ModelBuilder()
+            combined.add_particle(pos=wp.vec3(-5), vel=wp.vec3(0), mass=1)
+            combined.add_builder(source)
+            # Put a USD rigid body after the generated rod bodies to exercise nonzero row mapping.
+            combined.add_body(label="/Rigid")
+            combined.color()
+            model = combined.finalize()
+            del source, combined
+            binding = ovnewton.attach_ovstage(stage, model=model)
         else:
             binding = ovnewton.attach_ovstage(stage)
-
-        state = binding.model.state()
-
-        def unexpected_query(*_args):
-            raise AssertionError("surface publication must reuse its fixed query")
-
-        for ordinal in (2, 3):
-            moved_points = state.particle_q.numpy() + np.asarray((0, 0, 1), dtype=np.float32)
-            state.particle_q.assign(moved_points)
-            with monkeypatch.context() as patch:
-                patch.setattr(stage, "query_from_path_list", unexpected_query)
-                binding.update_to_ovstage(state, ordinal=ordinal)
-            stage.advance_write_floor(ordinal=ordinal).wait()
-
-        expected_points = {
-            "/World/Surface/Sim": [(0, 0, 2), (1, 0, 2), (0, 1, 2)],
-            "/World/SecondSurface/Sim": [(2, 0, 2), (3, 0, 2), (2, 1, 2)],
-        }
-        with ovstage.PathDictionary(stage) as pd:
-            for path, expected in expected_points.items():
-                path_list = pd.create_path_list_from_strings([path])
-                try:
-                    with stage.query_from_path_list(path_list) as query:
-                        with stage.read_attributes(
-                            query, [pd.intern_token("points")], ovstage.OrdinalRange(3, 3)
-                        ) as read:
-                            groups = 0
-                            for group in read.groups():
-                                with group:
-                                    np.testing.assert_array_equal(group.array(0).reshape(-1, 3), expected)
-                                    groups += 1
-                            assert groups == 1
-                finally:
-                    pd.destroy_path_list(path_list)
+            model = binding.model
+        state = model.state()
+        binding.update_to_ovstage(state, ordinal=2)
+        stage.advance_write_floor(2).wait()
+        np.testing.assert_allclose(read_points(stage, "/Cable/Sim", 2), cable_points, atol=1e-6)
+        np.testing.assert_allclose(read_points(stage, "/Volume/Sim", 2), volume_points, atol=1e-6)
+        before = state.body_q.numpy().copy()
+        binding.update_from_ovstage(state, model.control(), ordinal=2)
+        np.testing.assert_allclose(state.body_q.numpy(), before, atol=1e-6)
+        if not compose_builder:
+            solver = newton.solvers.SolverVBD(model, iterations=2)
+            output = model.state()
+            solver.step(state, output, model.control(), None, 1e-3)
+            binding.update_to_ovstage(output, ordinal=3)
+            stage.advance_write_floor(3).wait()
+            assert np.all(np.isfinite(read_points(stage, "/Cable/Sim", 3)))
+            assert np.all(np.isfinite(read_points(stage, "/Volume/Sim", 3)))
 
 
-def test_uses_newton_default_density_when_density_is_not_authored():
+@pytest.mark.parametrize("rigid_location", ["ancestor", "owner", "geometry"])
+def test_rejects_authored_rigid_ancestry(rigid_location):
+    import ovstage
+
+    scene = VOLUME
+    if rigid_location == "ancestor":
+        scene = scene.replace(
+            'def Xform "Volume"',
+            'def Xform "Rigid" (apiSchemas = ["PhysicsRigidBodyAPI"]) {\n    def Xform "Volume"',
+        ) + "\n}\n"
+        path = "/Rigid/Volume/Sim"
+    else:
+        schema = "PhysicsDeformableBodyAPI" if rigid_location == "owner" else "PhysicsVolumeDeformableSimAPI"
+        scene = scene.replace(f'"{schema}"', f'"{schema}", "PhysicsRigidBodyAPI"')
+        path = "/Volume/Sim"
+    with ovstage.Stage("rigid-deformable-owner") as stage, ovstage.PathDictionary(stage) as pd:
+        populate(stage, scene)
+        with pytest.raises(_deformables.UnsupportedPhysicsError, match=f"rigid body is unsupported at {path}"):
+            _deformables.read_deformables(stage, pd, 1)
+
+
+def test_caller_body_labels_do_not_define_usd_ancestry():
     import newton
+    import ovstage
 
-    value = _supported_surface(_read_test_deformables()[1])
-    value = replace(value, density=None)
-    builder = newton.ModelBuilder()
-    builder.default_shape_cfg.density = 123.0
-
-    _deformables.build_deformables(builder, [value])
-
-    assert sum(builder.particle_mass) == pytest.approx(0.5 * 0.01 * 123.0)
-
-
-def test_rejects_unsupported_surface_authoring_before_builder_mutation():
-    import newton
-
-    value = _supported_surface(_read_test_deformables()[1])
-    translated = np.eye(4, dtype=np.float64)
-    translated[3, :3] = (1.0, 2.0, 3.0)
-    cases = (
-        (replace(value, world_matrix=translated), "identity world transform"),
-        (replace(value, body_enabled=False), "disabled bodies"),
-        (replace(value, kinematic_enabled=True), "kinematic bodies"),
-        (replace(value, mass=1.0), "authored masses"),
-        (
-            replace(
-                value,
-                masses=_deformables.ElementField(np.ones(3, dtype=np.float32), "point"),
-            ),
-            "authored masses",
-        ),
-        (replace(value, thicknesses=None), "one constant thickness"),
-        (
-            replace(
-                value,
-                thicknesses=_deformables.ElementField(np.full(3, 0.01, dtype=np.float32), "point"),
-            ),
-            "one constant thickness",
-        ),
-        (
-            replace(value, material={**value.material, "surfaceShearStiffness": 3.0}),
-            "physics:surfaceShearStiffness",
-        ),
-    )
-
-    for unsupported, message in cases:
+    with ovstage.Stage("caller-body-label") as stage, ovstage.PathDictionary(stage) as pd:
+        populate(stage, VOLUME)
+        values = _deformables.read_deformables(stage, pd, 1)
         builder = newton.ModelBuilder()
-        with pytest.raises(_deformables.UnsupportedPhysicsError, match=message):
-            _deformables.build_deformables(builder, [unsupported])
-        assert builder.particle_count == 0
+        builder.add_body(label="/Volume")
+        _build.build_deformables(builder, values)
+        assert builder.body_count == 1
+        assert builder.particle_count == 4
+        assert builder.tet_count == 1

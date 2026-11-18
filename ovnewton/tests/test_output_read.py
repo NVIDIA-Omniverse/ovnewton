@@ -158,6 +158,37 @@ def Xform "World" (
 }
 """
 
+REVERSED_ROOT_MIXED_WIDTHS = """#usda 1.0
+(
+    metersPerUnit = 1
+    upAxis = "Z"
+)
+def Xform "World" (
+    apiSchemas = ["PhysicsArticulationRootAPI"]
+)
+{
+    def Xform "Link1" (
+        apiSchemas = ["PhysicsRigidBodyAPI"]
+    )
+    {
+    }
+    def Xform "Link2" (
+        apiSchemas = ["PhysicsRigidBodyAPI"]
+    )
+    {
+    }
+    def PhysicsRevoluteJoint "Hinge"
+    {
+        rel physics:body0 = </World/Link1>
+    }
+    def PhysicsSphericalJoint "Ball"
+    {
+        rel physics:body0 = </World/Link1>
+        rel physics:body1 = </World/Link2>
+    }
+}
+"""
+
 
 def _binding(stage, pd, device="cpu"):
     with wp.ScopedDevice(device):
@@ -193,31 +224,210 @@ def _body_path_at(binding, index):
     return list(binding.model.body_label)[index]
 
 
-def _groups_by_name(result, pd):
-    return {pd.token_to_string(group.attribute): group for group in result.groups}
+def _column_items(result):
+    return ((group, column) for group in result.groups for column in group.columns)
 
 
-def _logical_values(group):
-    values = wp.from_dlpack(group.dlpack(0)).numpy()
-    if group.has_data_index_map:
-        values = values[wp.from_dlpack(group.data_index_dlpack()).numpy()]
+def _unique_columns_by_name(result, pd):
+    """Index reads with one column per attribute; mixed-width reads must iterate."""
+    columns = {}
+    for _, column in _column_items(result):
+        name = pd.token_to_string(column.attribute)
+        assert name not in columns, f"multiple columns for {name!r}; use _column_items instead"
+        columns[name] = column
+    return columns
+
+
+def _logical_values(column):
+    values = wp.from_dlpack(column.dlpack(0)).numpy()
+    if column.has_data_index_map:
+        values = values[wp.from_dlpack(column.data_index_dlpack()).numpy()]
     else:
-        values = values[:group.data_count]
+        values = values[:column.data_count]
     return values
 
 
-def _dense_group_layout(group):
+def _dense_group_layout(group, column):
     return {
-        "is_array": group.is_array,
+        "is_array": column.is_array,
         "prim_offset": group.prim_offset,
         "prim_count": group.prim_count,
         "prim_rows": tuple(group.prim_index(i) for i in range(group.prim_count)),
-        "tensor_count": group.tensor_count,
-        "data_count": group.data_count,
-        "data_rows": tuple(group.data_row_index(i) for i in range(group.data_count)),
+        "tensor_count": column.tensor_count,
+        "data_count": column.data_count,
+        "data_rows": tuple(column.data_row_index(i) for i in range(column.data_count)),
         "has_prim_index_map": group.has_prim_index_map,
-        "has_data_index_map": group.has_data_index_map,
+        "has_data_index_map": column.has_data_index_map,
     }
+
+
+@pytest.mark.parametrize("usda,path", [
+    (DRIVEN_REVOLUTE, "/Joint"),
+    (DRIVEN_PRISMATIC, "/Joint"),
+    (REVERSED_WORLD_JOINT, "/World/Joint"),
+])
+def test_joint_effort_reads_selected_control_without_state(warp_device, usda, path):
+    with wp.ScopedDevice(warp_device), ovstage.Stage() as stage, ovstage.PathDictionary(stage) as pd:
+        _populate(stage, usda)
+        binding = ovnewton.attach_ovstage(stage)
+        control = binding.model.control()
+        control.joint_f.fill_(3.5)
+        query = binding.query(paths=[path])
+
+        result = binding.read(control=control, query=query, attributes=["joint_f"])
+        group = result.groups[0]
+        column = group.columns[0]
+        assert "joint_f" in {pd.token_to_string(token) for token in query.attributes}
+        assert pd.get_path_strings(group.prim_list) == [path]
+        np.testing.assert_array_equal(_logical_values(column), [3.5])
+        assert column.tensor(0).device.device_id == (warp_device.ordinal if warp_device.is_cuda else 0)
+
+
+@pytest.mark.parametrize("paths", [
+    ["/World/HingeB", "/World/HingeA"],
+    ["/World/Ball"],
+    ["/World/Ball", "/World/HingeB", "/World/HingeA"],
+])
+def test_joint_effort_reads_preserve_selected_dof_values(warp_device, paths):
+    expected = {"/World/HingeA": [1.5], "/World/HingeB": [-2.5], "/World/Ball": [3.0, 4.0, 5.0]}
+    with wp.ScopedDevice(warp_device), ovstage.Stage() as stage, ovstage.PathDictionary(stage) as pd:
+        _populate(stage, MIXED_JOINT_WIDTHS)
+        binding = ovnewton.attach_ovstage(stage)
+        model = binding.model
+        control = model.control()
+        values = np.zeros(model.joint_dof_count, dtype=np.float32)
+        starts = model.joint_qd_start.numpy()
+        for path, effort in expected.items():
+            joint = model.joint_label.index(path)
+            values[starts[joint]:starts[joint + 1]] = effort
+        control.joint_f.assign(values)
+        result = binding.read(control=control, query=binding.query(paths=paths), attributes=["joint_f"])
+
+        actual = {}
+        for group, column in _column_items(result):
+            group_paths = pd.get_path_strings(group.prim_list)
+            assert group_paths == [path for path in paths if len(expected[path]) == column.tensor(0).dtype.lanes]
+            rows = _logical_values(column).reshape(-1, column.tensor(0).dtype.lanes)
+            actual.update(zip(group_paths, rows))
+        assert set(actual) == set(paths)
+        for path in paths:
+            np.testing.assert_array_equal(actual[path], expected[path])
+
+
+def test_joint_effort_gather_keeps_native_sign_for_reversed_joint(warp_device):
+    expected = {"/World/Hinge": [1.5], "/World/Ball": [3.0, 4.0, 5.0]}
+    with wp.ScopedDevice(warp_device), ovstage.Stage() as stage, ovstage.PathDictionary(stage) as pd:
+        _populate(stage, REVERSED_ROOT_MIXED_WIDTHS)
+        binding = ovnewton.attach_ovstage(stage)
+        model = binding.model
+        state, control = model.state(), model.control()
+        values = np.zeros(model.joint_dof_count, dtype=np.float32)
+        starts = model.joint_qd_start.numpy()
+        for path, effort in expected.items():
+            joint = model.joint_label.index(path)
+            values[starts[joint]:starts[joint + 1]] = effort
+        control.joint_f.assign(values)
+        state.joint_qd.assign(values)
+        query = binding.query(paths=["/World/Ball", "/World/Hinge"])
+
+        # Reversing the hinge axis preserves the authored coordinate sign.
+        # Neither this correction nor degree conversion applies to native effort.
+        velocity = binding.read(state, query=query, attributes=["jointVelocity"])
+        hinge = next(g for g in velocity.groups if pd.get_path_strings(g.prim_list) == ["/World/Hinge"])
+        np.testing.assert_allclose(_logical_values(hinge.columns[0]), [np.rad2deg(1.5)], rtol=1e-6)
+
+        result = binding.read(control=control, query=query, attributes=["joint_f"])
+        span = range(control.joint_f.ptr, control.joint_f.ptr + control.joint_f.size * 4)
+        actual = {}
+        for group, column in _column_items(result):
+            assert column.tensor(0).data not in span, "mixed widths must gather, not borrow"
+            rows = _logical_values(column).reshape(-1, column.tensor(0).dtype.lanes)
+            actual.update(zip(pd.get_path_strings(group.prim_list), rows))
+        for path, effort in expected.items():
+            np.testing.assert_array_equal(actual[path], effort)
+
+
+def test_joint_effort_requires_compatible_control_only_for_selected_joints(warp_device):
+    with wp.ScopedDevice(warp_device), ovstage.Stage() as stage:
+        _populate(stage, DRIVEN_REVOLUTE)
+        binding = ovnewton.attach_ovstage(stage)
+        bodies = binding.query(paths=["/Arm"])
+        assert not binding.read(query=bodies, attributes=["joint_f"]).groups
+        joints = binding.query(paths=["/Joint"])
+        with pytest.raises(ValueError, match="control is required"):
+            binding.read(query=joints, attributes=["joint_f"])
+        control = binding.model.control()
+        for value in (None, wp.zeros(binding.model.joint_dof_count + 1, dtype=wp.float32)):
+            control.joint_f = value
+            with pytest.raises(ValueError, match="joint_f.*not compatible"):
+                binding.read(control=control, query=joints, attributes=["joint_f"])
+        control.joint_f = wp.zeros(binding.model.joint_dof_count, dtype=wp.float64)
+        with pytest.raises(ValueError, match="joint_f.*float32"):
+            binding.read(control=control, query=joints, attributes=["joint_f"])
+        control.joint_f = wp.zeros((binding.model.joint_dof_count, 2), dtype=wp.float32)[:, 0]
+        assert not control.joint_f.is_contiguous
+        with pytest.raises(ValueError, match="joint_f.*contiguous"):
+            binding.read(control=control, query=joints, attributes=["joint_f"])
+
+
+@pytest.mark.parametrize("name", ["joint_q", "joint_qd"])
+def test_native_joint_state_reads_require_contiguous_float32(warp_device, name):
+    with wp.ScopedDevice(warp_device), ovstage.Stage() as stage:
+        _populate(stage, DRIVEN_REVOLUTE)
+        binding = ovnewton.attach_ovstage(stage)
+        state = binding.model.state()
+        query = binding.query(paths=["/Joint"])
+        count = getattr(binding.model, name).shape[0]
+        setattr(state, name, wp.zeros(count, dtype=wp.float64))
+        with pytest.raises(ValueError, match=f"{name}.*float32"):
+            binding.read(state, query=query, attributes=[name])
+        setattr(state, name, wp.zeros((count, 2), dtype=wp.float32)[:, 0])
+        assert not getattr(state, name).is_contiguous
+        with pytest.raises(ValueError, match=f"{name}.*contiguous"):
+            binding.read(state, query=query, attributes=[name])
+
+
+@pytest.mark.skipif(not wp.is_cuda_available(), reason="CUDA not available")
+def test_joint_effort_rejects_control_on_another_device(warp_device):
+    with wp.ScopedDevice(warp_device), ovstage.Stage() as stage:
+        _populate(stage, DRIVEN_REVOLUTE)
+        binding = ovnewton.attach_ovstage(stage)
+        control = binding.model.control()
+        other_device = "cpu" if warp_device.is_cuda else "cuda:0"
+        control.joint_f = wp.zeros(binding.model.joint_dof_count, dtype=wp.float32, device=other_device)
+        with pytest.raises(ValueError, match="joint_f.*bound model is on"):
+            binding.read(control=control, query=binding.query(paths=["/Joint"]), attributes=["joint_f"])
+
+
+def test_joint_effort_read_retains_borrowed_control_and_stream_readiness(warp_device):
+    with wp.ScopedDevice(warp_device), ovstage.Stage() as stage:
+        _populate(stage, DRIVEN_REVOLUTE)
+        binding = ovnewton.attach_ovstage(stage)
+        control = binding.model.control()
+        query = binding.query(paths=["/Joint"])
+        joint = binding.model.joint_label.index("/Joint")
+        offset = int(binding.model.joint_qd_start.numpy()[joint])
+        snapshot = wp.empty(1, dtype=wp.float32, device=warp_device)
+        producer = wp.Stream(warp_device) if warp_device.is_cuda else None
+        with wp.ScopedStream(producer) if producer else contextlib.nullcontext():
+            control.joint_f.fill_(7.5)
+            group = binding.read(control=control, query=query, attributes=["joint_f"]).groups[0]
+            column = group.columns[0]
+        assert column.tensor(0).data == control.joint_f.ptr + offset * 4
+        assert bool(column.cuda_sync.wait_event) == warp_device.is_cuda
+        consumer = wp.Stream(warp_device) if warp_device.is_cuda else None
+        with wp.ScopedStream(consumer) if consumer else contextlib.nullcontext():
+            if consumer is not None:
+                ready = wp.Event(warp_device, cuda_event=column.cuda_sync.wait_event)
+                consumer.wait_event(ready)
+            wp.copy(snapshot, wp.from_dlpack(column.dlpack(0)))
+            control.joint_f.fill_(-2.0)
+            if consumer is not None:
+                wp.synchronize_stream(consumer)
+        np.testing.assert_array_equal(snapshot.numpy(), [7.5])
+        del control
+        gc.collect()
+        np.testing.assert_array_equal(_logical_values(column), [-2.0])
 
 
 def test_output_read_api_is_keyword_scoped():
@@ -379,10 +589,15 @@ def test_query_discovers_native_arrays_and_ignores_other_prims():
         assert isinstance(query, ovnewton.Query)
         assert query.prim_count == binding.model.body_count + 2
         assert names == {
+            "joint_f",
             "angularAcceleration",
             "angularVelocity",
+            "body_com",
+            "body_inertia",
+            "body_mass",
             "body_q",
             "body_qd",
+            "body_qdd",
             "centerOfMassPosition",
             "friction",
             "inertia",
@@ -412,10 +627,15 @@ def test_query_reuses_binding_catalog(monkeypatch):
         names = {pd.token_to_string(token) for token in query.attributes}
         assert query.prim_count == 2
         assert names == {
+            "joint_f",
             "angularAcceleration",
             "angularVelocity",
+            "body_com",
+            "body_inertia",
+            "body_mass",
             "body_q",
             "body_qd",
+            "body_qdd",
             "centerOfMassPosition",
             "friction",
             "inertia",
@@ -431,41 +651,93 @@ def test_query_reuses_binding_catalog(monkeypatch):
         }
 
 
-def test_output_read_indexes_borrowed_newton_body_arrays():
+def test_output_read_indexes_borrowed_newton_body_arrays(warp_device):
     with ovstage.Stage("output-read-values") as stage, ovstage.PathDictionary(stage) as pd:
         _populate(stage, DRIVEN_REVOLUTE)
-        binding = _binding(stage, pd)
+        binding = _binding(stage, pd, str(warp_device))
         state = _state(binding)
         selected_path = _body_path_at(binding, 1)
         selected_row = 1
 
         query = binding.query(paths=[selected_path])
         result = binding.read(state, query=query, attributes=("body_q", "body_qd"))
-        groups = _groups_by_name(result, pd)
+        assert len(result.groups) == 1
+        group = result.groups[0]
+        columns = {pd.token_to_string(column.attribute): column for column in group.columns}
         assert isinstance(result, ovnewton.ReadResult)
-        assert all(isinstance(group, ovnewton.ReadGroup) for group in result.groups)
-        assert set(groups) == {"body_q", "body_qd"}
-        assert all(pd.get_path_strings(group.prim_list) == [selected_path] for group in groups.values())
-        assert all(group.prim_count == 1 and group.tensor_count == 1 for group in groups.values())
-        assert all(not group.is_array for group in groups.values())
-        assert all(group.has_data_index_map for group in groups.values())
-        assert groups["body_q"].tensor(0).data == state.body_q.ptr
-        assert groups["body_qd"].tensor(0).data == state.body_qd.ptr
-        assert groups["body_q"].data_row_index(0) == selected_row
-        assert groups["body_q"].data_index_tensor().dtype.code == ovstage.DLDataTypeCode.kDLUInt
-        data_indices = groups["body_q"].data_index_array()
-        assert not data_indices.flags.writeable
-        np.testing.assert_array_equal(data_indices, (selected_row,))
+        assert isinstance(group, ovnewton.ReadGroup)
+        assert all(isinstance(column, ovnewton.ReadColumn) for column in group.columns)
+        assert list(columns) == ["body_q", "body_qd"]
+        assert group.column_count == 2
+        assert pd.get_path_strings(group.prim_list) == [selected_path]
+        assert group.prim_count == 1
+        assert all(column.tensor_count == 1 and not column.is_array for column in group.columns)
+        assert all(column.has_data_index_map for column in group.columns)
+        assert columns["body_q"].tensor(0).data == state.body_q.ptr
+        assert columns["body_qd"].tensor(0).data == state.body_qd.ptr
+        assert columns["body_q"].tensor(0).dtype.lanes == 7
+        assert columns["body_qd"].tensor(0).dtype.lanes == 6
+        assert columns["body_q"].data_row_index(0) == selected_row
+        assert columns["body_q"].data_index_tensor().dtype.code == ovstage.DLDataTypeCode.kDLUInt
+        if warp_device.is_cpu:
+            data_indices = columns["body_q"].data_index_array()
+            assert not data_indices.flags.writeable
+            np.testing.assert_array_equal(data_indices, (selected_row,))
         np.testing.assert_array_equal(
-            wp.from_dlpack(groups["body_q"].data_index_dlpack()).numpy(),
+            wp.from_dlpack(columns["body_q"].data_index_dlpack()).numpy(),
             (selected_row,),
         )
         with pytest.raises(ValueError, match="read-only"):
-            groups["body_q"].data_index_dlpack(readonly=False)
+            columns["body_q"].data_index_dlpack(readonly=False)
         with pytest.raises(IndexError, match="out of range"):
-            groups["body_q"].data_row_index(1)
-        np.testing.assert_allclose(_logical_values(groups["body_q"])[0], state.body_q.numpy()[selected_row])
-        np.testing.assert_allclose(_logical_values(groups["body_qd"])[0], state.body_qd.numpy()[selected_row])
+            columns["body_q"].data_row_index(1)
+        np.testing.assert_allclose(_logical_values(columns["body_q"])[0], state.body_q.numpy()[selected_row])
+        np.testing.assert_allclose(_logical_values(columns["body_qd"])[0], state.body_qd.numpy()[selected_row])
+
+
+def test_output_columns_keep_independent_row_maps(warp_device):
+    with ovstage.Stage("output-column-maps") as stage, ovstage.PathDictionary(stage) as pd:
+        _populate(stage, DRIVEN_REVOLUTE)
+        binding = _binding(stage, pd, str(warp_device))
+        state = _state(binding)
+        path = _body_path_at(binding, 1)
+        result = binding.read(
+            state, query=binding.query(paths=[path]), attributes=("position", "body_q", "position"),
+        )
+        assert len(result.groups) == 1
+        group = result.groups[0]
+        position, pose = group.columns
+        assert [pd.token_to_string(column.attribute) for column in group.columns] == ["position", "body_q"]
+        assert pd.get_path_strings(group.prim_list) == [path]
+        assert group.prim_index(0) == 0
+        assert not position.has_data_index_map
+        assert position.data_row_index(0) == 0
+        assert pose.data_row_index(0) == 1
+        np.testing.assert_array_equal(_logical_values(position), [[11, 21, 31]])
+        np.testing.assert_array_equal(_logical_values(pose), [[11, 21, 31, 0, 0, 0, 1]])
+
+
+@pytest.mark.parametrize("attributes", [
+    ("body_q", "body_qd", "joint_q", "joint_qd"),
+    ("joint_qd", "body_qd", "joint_q", "body_q"),
+])
+def test_output_groups_preserve_distinct_selections_and_request_order(warp_device, attributes):
+    with ovstage.Stage("output-group-order") as stage, ovstage.PathDictionary(stage) as pd:
+        _populate(stage, DRIVEN_REVOLUTE)
+        binding = _binding(stage, pd, str(warp_device))
+        result = binding.read(
+            binding.model.state(), query=binding.query(paths=["/Arm", "/Joint"]), attributes=attributes,
+        )
+        assert len(result.groups) == 2
+        expected_paths = ["/Arm", "/Joint"] if attributes[0] == "body_q" else ["/Joint", "/Arm"]
+        assert [pd.get_path_strings(group.prim_list) for group in result.groups] == [
+            [path] for path in expected_paths
+        ]
+        for group in result.groups:
+            prefix = "body_" if pd.get_path_strings(group.prim_list) == ["/Arm"] else "joint_"
+            assert [pd.token_to_string(column.attribute) for column in group.columns] == [
+                name for name in attributes if name.startswith(prefix)
+            ]
 
 
 def test_output_read_preserves_body_origin_pose_and_world_com_twist_in_model_units():
@@ -476,9 +748,9 @@ def test_output_read_preserves_body_origin_pose_and_world_com_twist_in_model_uni
 
         query = binding.query(paths=["/Body"])
         result = binding.read(state, query=query, attributes=("body_q", "body_qd"))
-        groups = _groups_by_name(result, pd)
-        pose = _logical_values(groups["body_q"])[0]
-        twist = _logical_values(groups["body_qd"])[0]
+        columns = _unique_columns_by_name(result, pd)
+        pose = _logical_values(columns["body_q"])[0]
+        twist = _logical_values(columns["body_qd"])[0]
 
         # Pose translation names the body origin, not the offset center of mass.
         # Values remain in the model's units: this stage uses centimeters.
@@ -510,27 +782,27 @@ def test_output_read_splits_body_pose_and_twist_on_device(device):
             query=binding.query(paths=["/Body"]),
             attributes=("position", "orientation", "linearVelocity", "angularVelocity"),
         )
-        groups = _groups_by_name(result, pd)
+        columns = _unique_columns_by_name(result, pd)
 
-        assert groups["position"].tensor(0).data != state.body_q.ptr
-        assert groups["orientation"].tensor(0).data != state.body_q.ptr
-        assert groups["linearVelocity"].tensor(0).data != state.body_qd.ptr
-        assert groups["angularVelocity"].tensor(0).data != state.body_qd.ptr
-        assert groups["position"].tensor(0).dtype.lanes == 3
-        assert groups["orientation"].tensor(0).dtype.lanes == 4
-        np.testing.assert_allclose(_logical_values(groups["position"]), ((4.0, 5.0, 6.0),), atol=1.0e-6)
+        assert columns["position"].tensor(0).data != state.body_q.ptr
+        assert columns["orientation"].tensor(0).data != state.body_q.ptr
+        assert columns["linearVelocity"].tensor(0).data != state.body_qd.ptr
+        assert columns["angularVelocity"].tensor(0).data != state.body_qd.ptr
+        assert columns["position"].tensor(0).dtype.lanes == 3
+        assert columns["orientation"].tensor(0).dtype.lanes == 4
+        np.testing.assert_allclose(_logical_values(columns["position"]), ((4.0, 5.0, 6.0),), atol=1.0e-6)
         np.testing.assert_allclose(
-            _logical_values(groups["orientation"]),
+            _logical_values(columns["orientation"]),
             ((0.0, 0.0, 2.0**-0.5, 2.0**-0.5),),
             atol=1.0e-6,
         )
-        np.testing.assert_allclose(_logical_values(groups["linearVelocity"]), ((-2.0, 1.0, 3.0),), atol=1.0e-6)
+        np.testing.assert_allclose(_logical_values(columns["linearVelocity"]), ((-2.0, 1.0, 3.0),), atol=1.0e-6)
         np.testing.assert_allclose(
-            _logical_values(groups["angularVelocity"]),
+            _logical_values(columns["angularVelocity"]),
             ((-np.deg2rad(20.0), np.deg2rad(10.0), np.deg2rad(30.0)),),
             atol=1.0e-6,
         )
-        assert all(bool(group.cuda_sync.wait_event) == (device != "cpu") for group in groups.values())
+        assert all(bool(column.cuda_sync.wait_event) == (device != "cpu") for column in columns.values())
 
 
 @pytest.mark.parametrize(
@@ -549,16 +821,16 @@ def test_filtered_split_body_reads_gather_only_selected_rows(device):
             query=binding.query(paths=[selected_path]),
             attributes=("position", "linearVelocity"),
         )
-        groups = _groups_by_name(result, pd)
+        columns = _unique_columns_by_name(result, pd)
 
-        assert all(group.tensor(0).shape[0] == 1 for group in groups.values())
-        assert all(not group.has_data_index_map for group in groups.values())
+        assert all(column.tensor(0).shape[0] == 1 for column in columns.values())
+        assert all(not column.has_data_index_map for column in columns.values())
         np.testing.assert_allclose(
-            _logical_values(groups["position"]),
+            _logical_values(columns["position"]),
             state.body_q.numpy()[1:2, :3],
         )
         np.testing.assert_allclose(
-            _logical_values(groups["linearVelocity"]),
+            _logical_values(columns["linearVelocity"]),
             state.body_qd.numpy()[1:2, :3],
         )
 
@@ -588,7 +860,7 @@ def test_output_read_splits_optional_body_acceleration_on_device(device):
                 device=binding.model.device,
             )
         )
-        groups = _groups_by_name(
+        columns = _unique_columns_by_name(
             binding.read(
                 state,
                 query=binding.query(paths=["/Body"]),
@@ -596,8 +868,8 @@ def test_output_read_splits_optional_body_acceleration_on_device(device):
             ),
             pd,
         )
-        np.testing.assert_allclose(_logical_values(groups["linearAcceleration"]), ((1.0, 2.0, 3.0),))
-        np.testing.assert_allclose(_logical_values(groups["angularAcceleration"]), ((0.1, 0.2, 0.3),))
+        np.testing.assert_allclose(_logical_values(columns["linearAcceleration"]), ((1.0, 2.0, 3.0),))
+        np.testing.assert_allclose(_logical_values(columns["angularAcceleration"]), ((0.1, 0.2, 0.3),))
 
 
 @pytest.mark.parametrize(
@@ -612,13 +884,14 @@ def test_output_read_borrows_body_mass(device):
         query = binding.query(paths=["/Body"])
         result = binding.read(query=query, attributes=("mass",))
         group = result.groups[0]
+        column = group.columns[0]
 
-        assert pd.token_to_string(group.attribute) == "mass"
+        assert pd.token_to_string(column.attribute) == "mass"
         assert pd.get_path_strings(group.prim_list) == ["/Body"]
-        assert group.tensor(0).data == binding.model.body_mass.ptr
-        assert group.tensor(0).dtype.lanes == 1
-        assert bool(group.cuda_sync.wait_event) == (device != "cpu")
-        np.testing.assert_allclose(_logical_values(group), (2.0,))
+        assert column.tensor(0).data == binding.model.body_mass.ptr
+        assert column.tensor(0).dtype.lanes == 1
+        assert bool(column.cuda_sync.wait_event) == (device != "cpu")
+        np.testing.assert_allclose(_logical_values(column), (2.0,))
 
 
 @pytest.mark.parametrize(
@@ -651,14 +924,15 @@ def test_output_read_borrows_effective_scene_gravity(device, world):
         assert {pd.token_to_string(token) for token in query.attributes} == {"gravity"}
         result = binding.read(query=query, attributes=("gravity",))
         group = result.groups[0]
+        column = group.columns[0]
 
         assert pd.get_path_strings(group.prim_list) == ["/Scene"]
-        assert group.data_count == 1
+        assert column.data_count == 1
         row = 0 if world is None else (1 if world == -1 else world)
-        assert group.tensor(0).data == binding.model.gravity.ptr + row * binding.model.gravity.strides[0]
-        assert group.tensor(0).shape[0] == 1
-        assert group.tensor(0).dtype.lanes == 3
-        np.testing.assert_allclose(_logical_values(group), ((0.0, 0.0, -9.81),), atol=1.0e-6)
+        assert column.tensor(0).data == binding.model.gravity.ptr + row * binding.model.gravity.strides[0]
+        assert column.tensor(0).shape[0] == 1
+        assert column.tensor(0).dtype.lanes == 3
+        np.testing.assert_allclose(_logical_values(column), ((0.0, 0.0, -9.81),), atol=1.0e-6)
 
 
 @pytest.mark.parametrize(
@@ -679,7 +953,7 @@ def test_output_read_rejects_ambiguous_scene_gravity(device):
         with pytest.raises(ValueError, match="cannot map.*gravity.*single Newton world"):
             binding.read(query=binding.query(paths=["/Scene"]), attributes=("gravity",))
         masses = binding.read(query=binding.query(paths=["/A", "/B"]), attributes=("mass",))
-        assert masses.groups[0].data_count == 2
+        assert masses.groups[0].columns[0].data_count == 2
 
 
 @pytest.mark.parametrize(
@@ -703,19 +977,20 @@ def test_output_read_groups_shape_materials_by_body(device):
         query = binding.query(paths=["/B", "/A"])
         names = {pd.token_to_string(token) for token in query.attributes}
         assert {"friction", "restitution", "shapeCount"} <= names
-        counts = binding.read(query=query, attributes=("shapeCount",)).groups[0]
+        counts_group = binding.read(query=query, attributes=("shapeCount",)).groups[0]
+        counts = counts_group.columns[0]
         assert bool(counts.cuda_sync.wait_event) == (device != "cpu")
         np.testing.assert_array_equal(_logical_values(counts), (1, 2))
-        groups = _groups_by_name(
+        columns = _unique_columns_by_name(
             binding.read(query=query, attributes=("shapeCount", "friction", "restitution")),
             pd,
         )
 
-        assert groups["shapeCount"].tensor(0).dtype.code == ovstage.DLDataTypeCode.kDLInt
-        assert groups["shapeCount"].tensor(0).dtype.lanes == 1
-        assert groups["friction"].tensor(0).dtype.lanes == 2
-        assert groups["restitution"].tensor(0).dtype.lanes == 2
-        np.testing.assert_array_equal(_logical_values(groups["shapeCount"]), (1, 2))
+        assert columns["shapeCount"].tensor(0).dtype.code == ovstage.DLDataTypeCode.kDLInt
+        assert columns["shapeCount"].tensor(0).dtype.lanes == 1
+        assert columns["friction"].tensor(0).dtype.lanes == 2
+        assert columns["restitution"].tensor(0).dtype.lanes == 2
+        np.testing.assert_array_equal(_logical_values(columns["shapeCount"]), (1, 2))
         shapes_by_body = {
             path: [
                 shape
@@ -734,8 +1009,8 @@ def test_output_read_groups_shape_materials_by_body(device):
             + [0.0] * (2 - len(shapes_by_body[path]))
             for path in ("/B", "/A")
         ]
-        np.testing.assert_allclose(_logical_values(groups["friction"]), expected_friction)
-        np.testing.assert_allclose(_logical_values(groups["restitution"]), expected_restitution)
+        np.testing.assert_allclose(_logical_values(columns["friction"]), expected_friction)
+        np.testing.assert_allclose(_logical_values(columns["restitution"]), expected_restitution)
 
 
 @pytest.mark.parametrize(
@@ -756,22 +1031,25 @@ def test_output_read_shape_material_lane_limit(device, shape_count):
         binding.model.shape_material_restitution.fill_(0.5)
 
         query = binding.query(paths=["/A"])
-        counts = binding.read(query=query, attributes=("shapeCount",)).groups[0]
+        counts_group = binding.read(query=query, attributes=("shapeCount",)).groups[0]
+        counts = counts_group.columns[0]
         np.testing.assert_array_equal(_logical_values(counts), (shape_count,))
-        assert binding.read(query=query, attributes=("mass",)).groups[0].data_count == 1
+        assert binding.read(query=query, attributes=("mass",)).groups[0].columns[0].data_count == 1
         for name, value in (("friction", 0.25), ("restitution", 0.5)):
             if shape_count > 255:
                 with pytest.raises(ValueError, match=f"{name}.*255 shapes.*256"):
                     binding.read(query=query, attributes=(name,))
             else:
                 group = binding.read(query=query, attributes=(name,)).groups[0]
-                assert group.tensor(0).dtype.lanes == 255
-                np.testing.assert_array_equal(_logical_values(group), np.full((1, 255), value))
+                column = group.columns[0]
+                assert column.tensor(0).dtype.lanes == 255
+                np.testing.assert_array_equal(_logical_values(column), np.full((1, 255), value))
                 if device == "cpu":
-                    np.testing.assert_array_equal(group.array(0), np.full(255, value))
+                    np.testing.assert_array_equal(column.array(0), np.full(255, value))
 
             # A wide body elsewhere in the model must not prevent narrow queries.
-            narrow = binding.read(query=binding.query(paths=["/B"]), attributes=(name,)).groups[0]
+            narrow_group = binding.read(query=binding.query(paths=["/B"]), attributes=(name,)).groups[0]
+            narrow = narrow_group.columns[0]
             np.testing.assert_array_equal(_logical_values(narrow), (value,))
 
 
@@ -788,18 +1066,18 @@ def test_output_read_borrows_body_mass_frame_properties(device):
             query=binding.query(paths=["/Body"]),
             attributes=("inertia", "centerOfMassPosition"),
         )
-        groups = _groups_by_name(result, pd)
+        columns = _unique_columns_by_name(result, pd)
 
-        assert groups["inertia"].tensor(0).data == binding.model.body_inertia.ptr
-        assert groups["inertia"].tensor(0).dtype.lanes == 9
-        assert groups["centerOfMassPosition"].tensor(0).data == binding.model.body_com.ptr
-        assert groups["centerOfMassPosition"].tensor(0).dtype.lanes == 3
+        assert columns["inertia"].tensor(0).data == binding.model.body_inertia.ptr
+        assert columns["inertia"].tensor(0).dtype.lanes == 9
+        assert columns["centerOfMassPosition"].tensor(0).data == binding.model.body_com.ptr
+        assert columns["centerOfMassPosition"].tensor(0).dtype.lanes == 3
         np.testing.assert_allclose(
-            _logical_values(groups["inertia"]).reshape(3, 3),
+            _logical_values(columns["inertia"]).reshape(3, 3),
             np.diag((1.0, 2.0, 3.0)),
         )
         np.testing.assert_allclose(
-            _logical_values(groups["centerOfMassPosition"]),
+            _logical_values(columns["centerOfMassPosition"]),
             ((0.25, 0.5, 0.75),),
         )
 
@@ -830,27 +1108,25 @@ def test_output_read_uses_authored_articulation_root_identity(device):
             "rootLinearVelocity",
             "rootAngularVelocity",
         }
-        groups = _groups_by_name(
-            binding.read(
-                state,
-                query=query,
-                attributes=(
-                    "rootPosition",
-                    "rootOrientation",
-                    "rootLinearVelocity",
-                    "rootAngularVelocity",
-                ),
+        result = binding.read(
+            state,
+            query=query,
+            attributes=(
+                "rootPosition",
+                "rootOrientation",
+                "rootLinearVelocity",
+                "rootAngularVelocity",
             ),
-            pd,
         )
-
-        assert all(pd.get_path_strings(group.prim_list) == ["/World"] for group in groups.values())
-        assert all(not group.has_data_index_map for group in groups.values())
-        assert all(group.data_row_index(0) == 0 for group in groups.values())
-        np.testing.assert_allclose(_logical_values(groups["rootPosition"]), ((1.0, 2.0, 3.0),))
-        np.testing.assert_allclose(_logical_values(groups["rootOrientation"]), ((0.0, 0.0, 0.0, 1.0),))
-        np.testing.assert_allclose(_logical_values(groups["rootLinearVelocity"]), ((4.0, 5.0, 6.0),))
-        np.testing.assert_allclose(_logical_values(groups["rootAngularVelocity"]), ((0.1, 0.2, 0.3),))
+        columns = _unique_columns_by_name(result, pd)
+        assert len(result.groups) == 1
+        assert pd.get_path_strings(result.groups[0].prim_list) == ["/World"]
+        assert all(not column.has_data_index_map for column in columns.values())
+        assert all(column.data_row_index(0) == 0 for column in columns.values())
+        np.testing.assert_allclose(_logical_values(columns["rootPosition"]), ((1.0, 2.0, 3.0),))
+        np.testing.assert_allclose(_logical_values(columns["rootOrientation"]), ((0.0, 0.0, 0.0, 1.0),))
+        np.testing.assert_allclose(_logical_values(columns["rootLinearVelocity"]), ((4.0, 5.0, 6.0),))
+        np.testing.assert_allclose(_logical_values(columns["rootAngularVelocity"]), ((0.1, 0.2, 0.3),))
 
 
 @pytest.mark.parametrize(
@@ -886,15 +1162,18 @@ def Xform "World" ({ancestor_schema}) {{
             root_path = "/World/Body" if root_location == "body" else "/World"
             query = binding.query(paths=[root_path])
             assert query.prim_count == 1
-            groups = _groups_by_name(binding.read(state, query=query, attributes=attributes), pd)
-            assert set(groups) == set(attributes)
-            assert all(pd.get_path_strings(group.prim_list) == [root_path] for group in groups.values())
-            np.testing.assert_allclose(_logical_values(groups["rootPosition"]), ((1.0, 2.0, 3.0),))
-            np.testing.assert_allclose(_logical_values(groups["rootOrientation"]), ((0.0, 0.0, 0.0, 1.0),))
-            np.testing.assert_array_equal(_logical_values(groups["rootLinearVelocity"]), ((0.0, 0.0, 0.0),))
-            np.testing.assert_array_equal(_logical_values(groups["rootAngularVelocity"]), ((0.0, 0.0, 0.0),))
+            result = binding.read(state, query=query, attributes=attributes)
+            columns = _unique_columns_by_name(result, pd)
+            assert set(columns) == set(attributes)
+            assert len(result.groups) == 1
+            assert pd.get_path_strings(result.groups[0].prim_list) == [root_path]
+            np.testing.assert_allclose(_logical_values(columns["rootPosition"]), ((1.0, 2.0, 3.0),))
+            np.testing.assert_allclose(_logical_values(columns["rootOrientation"]), ((0.0, 0.0, 0.0, 1.0),))
+            np.testing.assert_array_equal(_logical_values(columns["rootLinearVelocity"]), ((0.0, 0.0, 0.0),))
+            np.testing.assert_array_equal(_logical_values(columns["rootAngularVelocity"]), ((0.0, 0.0, 0.0),))
 
-        body = binding.read(state, query=binding.query(paths=["/World/Body"]), attributes=("body_q",)).groups[0]
+        body_group = binding.read(state, query=binding.query(paths=["/World/Body"]), attributes=("body_q",)).groups[0]
+        body = body_group.columns[0]
         np.testing.assert_allclose(_logical_values(body), ((1.0, 2.0, 3.0, 0.0, 0.0, 0.0, 1.0),))
 
 
@@ -912,8 +1191,8 @@ def Xform "World" (apiSchemas = ["PhysicsArticulationRootAPI"]) {
         state = binding.model.state()
         # The existing importer accepts these independent bodies. Do not turn
         # an ambiguous output identity into a simulation import failure.
-        bodies = binding.read(state, attributes=("body_q",)).groups[0]
-        assert bodies.prim_count == 2
+        bodies_group = binding.read(state, attributes=("body_q",)).groups[0]
+        assert bodies_group.prim_count == 2
         assert binding.read(state, attributes=("rootPosition",)).groups == ()
 
 
@@ -948,21 +1227,23 @@ def test_output_read_converts_shared_joint_state_to_axis_units(device):
             query=query,
             attributes=("jointPosition", "jointVelocity"),
         )
-        position = next(
-            group for group in result.groups if pd.token_to_string(group.attribute) == "jointPosition"
+        position_group, position = next(
+            (group, column) for group, column in _column_items(result)
+            if pd.token_to_string(column.attribute) == "jointPosition"
         )
         velocities = [
-            group for group in result.groups if pd.token_to_string(group.attribute) == "jointVelocity"
+            (group, column) for group, column in _column_items(result)
+            if pd.token_to_string(column.attribute) == "jointVelocity"
         ]
 
-        assert pd.get_path_strings(position.prim_list) == ["/World/HingeA"]
+        assert pd.get_path_strings(position_group.prim_list) == ["/World/HingeA"]
         np.testing.assert_allclose(_logical_values(position), (35.0,), atol=1.0e-5)
-        assert [pd.get_path_strings(group.prim_list) for group in velocities] == [
+        assert [pd.get_path_strings(group.prim_list) for group, _ in velocities] == [
             ["/World/HingeA"],
             ["/World/Ball"],
         ]
-        np.testing.assert_allclose(_logical_values(velocities[0]), (45.0,), atol=1.0e-5)
-        np.testing.assert_allclose(_logical_values(velocities[1]), ((10.0, 20.0, 30.0),), atol=1.0e-5)
+        np.testing.assert_allclose(_logical_values(velocities[0][1]), (45.0,), atol=1.0e-5)
+        np.testing.assert_allclose(_logical_values(velocities[1][1]), ((10.0, 20.0, 30.0),), atol=1.0e-5)
 
 
 @pytest.mark.parametrize(
@@ -1012,24 +1293,24 @@ def test_output_read_exposes_current_joint_targets_and_properties(device):
         with pytest.raises(ValueError, match="control is required"):
             binding.read(state, query=query, attributes=("jointPositionTarget",))
 
-        groups = _groups_by_name(
+        columns = _unique_columns_by_name(
             binding.read(state, control=control, query=query, attributes=attributes),
             pd,
         )
-        assert _logical_values(groups["jointPositionTarget"])[0] == pytest.approx(15.0)
-        assert _logical_values(groups["jointVelocityTarget"])[0] == pytest.approx(25.0)
-        assert _logical_values(groups["jointStiffness"])[0] == pytest.approx(100.0 / (180.0 / np.pi))
-        assert _logical_values(groups["jointDamping"])[0] == pytest.approx(20.0 / (180.0 / np.pi))
-        np.testing.assert_allclose(_logical_values(groups["jointLimit"]), ((-30.0, 60.0),), atol=1.0e-5)
-        assert _logical_values(groups["jointMaxVelocity"])[0] == pytest.approx(90.0)
-        assert _logical_values(groups["jointMaxForce"])[0] == pytest.approx(50.0)
-        assert _logical_values(groups["jointArmature"])[0] == pytest.approx(0.2)
-        assert _logical_values(groups["jointFriction"])[0] == pytest.approx(0.3)
-        assert groups["jointMaxForce"].tensor(0).data == model.joint_effort_limit.ptr + qd_index * 4
-        assert groups["jointArmature"].tensor(0).data == model.joint_armature.ptr + qd_index * 4
-        assert groups["jointFriction"].tensor(0).data == model.joint_friction.ptr + qd_index * 4
+        assert _logical_values(columns["jointPositionTarget"])[0] == pytest.approx(15.0)
+        assert _logical_values(columns["jointVelocityTarget"])[0] == pytest.approx(25.0)
+        assert _logical_values(columns["jointStiffness"])[0] == pytest.approx(100.0 / (180.0 / np.pi))
+        assert _logical_values(columns["jointDamping"])[0] == pytest.approx(20.0 / (180.0 / np.pi))
+        np.testing.assert_allclose(_logical_values(columns["jointLimit"]), ((-30.0, 60.0),), atol=1.0e-5)
+        assert _logical_values(columns["jointMaxVelocity"])[0] == pytest.approx(90.0)
+        assert _logical_values(columns["jointMaxForce"])[0] == pytest.approx(50.0)
+        assert _logical_values(columns["jointArmature"])[0] == pytest.approx(0.2)
+        assert _logical_values(columns["jointFriction"])[0] == pytest.approx(0.3)
+        assert columns["jointMaxForce"].tensor(0).data == model.joint_effort_limit.ptr + qd_index * 4
+        assert columns["jointArmature"].tensor(0).data == model.joint_armature.ptr + qd_index * 4
+        assert columns["jointFriction"].tensor(0).data == model.joint_friction.ptr + qd_index * 4
 
-        model_only = _groups_by_name(
+        model_only = _unique_columns_by_name(
             binding.read(
                 query=query,
                 attributes=("jointMaxForce", "jointArmature", "jointFriction"),
@@ -1059,17 +1340,23 @@ def test_output_read_preserves_multi_axis_joint_limit_layout():
             attributes=("jointLimit",),
         )
         group = result.groups[0]
-        assert group.tensor(0).dtype.lanes == 4
+        column = group.columns[0]
+        assert column.tensor(0).dtype.lanes == 4
         np.testing.assert_allclose(
-            _logical_values(group),
+            _logical_values(column),
             ((-2.0, 3.0, -45.0, 60.0),),
             atol=1.0e-5,
         )
 
 
 @pytest.mark.parametrize("static_target", [False, True])
-def test_output_read_uses_authored_joint_body_order_and_unlimited_bounds(static_target):
-    usda = REVERSED_WORLD_JOINT
+@pytest.mark.parametrize("axis,expected", [(1, (-10, -20, -30, -40)), (-1, (10, 20, 30, 40))])
+def test_output_read_uses_authored_joint_body_order_and_unlimited_bounds(warp_device, static_target, axis, expected):
+    usda = REVERSED_WORLD_JOINT.replace(
+        'def PhysicsRevoluteJoint "Joint"',
+        'def PhysicsRevoluteJoint "Joint" '
+        '(prepend apiSchemas = ["PhysicsJointStateAPI:angular", "PhysicsDriveAPI:angular"])',
+    )
     if static_target:
         usda = usda.replace(
             "rel physics:body0 = </World/Body>",
@@ -1077,8 +1364,14 @@ def test_output_read_uses_authored_joint_body_order_and_unlimited_bounds(static_
         )
     with ovstage.Stage("output-read-joint-body-order") as stage, ovstage.PathDictionary(stage) as pd:
         _populate(stage, usda)
-        with wp.ScopedDevice("cpu"):
-            binding = ovnewton.attach_ovstage(stage)
+        with wp.ScopedDevice(warp_device):
+            builder = newton.ModelBuilder()
+            body = builder.add_link(label="/World/Body")
+            joint = builder.add_joint_revolute(
+                -1, body, axis=(axis, 0, 0), target_ke=10, target_kd=1, label="/World/Joint",
+            )
+            builder.add_articulation([joint])
+            binding = ovnewton.attach_ovstage(stage, model=builder.finalize())
         model = binding.model
         state = model.state()
         control = model.control()
@@ -1097,7 +1390,7 @@ def test_output_read_uses_authored_joint_body_order_and_unlimited_bounds(static_
         assign(control.joint_target_q, target, np.deg2rad(30.0))
         assign(control.joint_target_qd, qd, np.deg2rad(40.0))
 
-        groups = _groups_by_name(
+        columns = _unique_columns_by_name(
             binding.read(
                 state,
                 control=control,
@@ -1112,14 +1405,198 @@ def test_output_read_uses_authored_joint_body_order_and_unlimited_bounds(static_
             ),
             pd,
         )
-        assert _logical_values(groups["jointPosition"])[0] == pytest.approx(-10.0)
-        assert _logical_values(groups["jointVelocity"])[0] == pytest.approx(-20.0)
-        assert _logical_values(groups["jointPositionTarget"])[0] == pytest.approx(-30.0)
-        assert _logical_values(groups["jointVelocityTarget"])[0] == pytest.approx(-40.0)
+        assert _logical_values(columns["jointPosition"])[0] == pytest.approx(expected[0])
+        assert _logical_values(columns["jointVelocity"])[0] == pytest.approx(expected[1])
+        assert _logical_values(columns["jointPositionTarget"])[0] == pytest.approx(expected[2])
+        assert _logical_values(columns["jointVelocityTarget"])[0] == pytest.approx(expected[3])
         np.testing.assert_array_equal(
-            _logical_values(groups["jointLimit"]),
+            _logical_values(columns["jointLimit"]),
             ((-np.finfo(np.float32).max, np.finfo(np.float32).max),),
         )
+        binding.update_to_ovstage(state, ordinal=2)
+        stage.advance_write_floor(2).wait()
+        with pd.create_path_list_from_strings(["/World/Joint"]) as paths, stage.query_from_path_list(paths) as query:
+            attributes = [pd.intern_token(f"state:angular:physics:{name}") for name in ("position", "velocity")]
+            with stage.read_attributes(query, attributes, ovstage.OrdinalRange.latest(2)) as read:
+                read.wait()
+                values = {}
+                for group in read.groups():
+                    with group:
+                        for column in group.columns:
+                            values[column.attribute] = float(column.array(0)[column.data_row_index(0)])
+                assert [values[token] for token in attributes] == pytest.approx(expected[:2])
+        # An authored command must map back to the same native coordinate,
+        # including rc2-style caller-owned models with the positive axis.
+        for name, value in (("position", expected[0]), ("velocity", expected[1])):
+            _write_scalar(stage, pd, "/World/Joint", f"state:angular:physics:{name}", value, 3)
+        for name, value in (("targetPosition", expected[2]), ("targetVelocity", expected[3])):
+            _write_scalar(stage, pd, "/World/Joint", f"drive:angular:physics:{name}", value, 3)
+        stage.advance_write_floor(3).wait()
+        destination = model.state()
+        destination_control = model.control()
+        binding.update_from_ovstage(destination, destination_control, attributes=(
+            "jointPosition", "jointVelocity", "jointPositionTarget", "jointVelocityTarget",
+        ))
+        np.testing.assert_allclose(destination.joint_q.numpy(), state.joint_q.numpy())
+        np.testing.assert_allclose(destination.joint_qd.numpy(), state.joint_qd.numpy())
+        np.testing.assert_allclose(destination_control.joint_target_q.numpy(), control.joint_target_q.numpy())
+        np.testing.assert_allclose(destination_control.joint_target_qd.numpy(), control.joint_target_qd.numpy())
+
+
+@pytest.mark.parametrize("import_mode", ["attach", "add"])
+@pytest.mark.parametrize("kind,instance,scale", [("Revolute", "angular", np.pi / 180), ("Prismatic", "linear", 1.0)])
+@pytest.mark.parametrize("world_target", ["", "rel physics:body1 = </World>"])
+def test_reversed_joint_motion_and_reads(warp_device, import_mode, kind, instance, scale, world_target):
+    usda = f'''#usda 1.0
+def Xform "World" (prepend apiSchemas = ["PhysicsArticulationRootAPI"]) {{
+    def Xform "Body" (prepend apiSchemas = ["PhysicsRigidBodyAPI", "PhysicsMassAPI"]) {{
+        float physics:mass = 1
+        float3 physics:diagonalInertia = (1, 1, 1)
+    }}
+    def Physics{kind}Joint "Joint" (
+        prepend apiSchemas = ["PhysicsJointStateAPI:{instance}", "PhysicsDriveAPI:{instance}"]
+    ) {{
+        rel physics:body0 = </World/Body>
+        {world_target}
+        float physics:lowerLimit = -10
+        float physics:upperLimit = inf
+        float state:{instance}:physics:position = 5
+        float state:{instance}:physics:velocity = 2
+        float drive:{instance}:physics:targetPosition = 8
+        float drive:{instance}:physics:targetVelocity = 3
+        float drive:{instance}:physics:stiffness = 10
+        float drive:{instance}:physics:damping = 1
+    }}
+}}
+'''
+    with wp.ScopedDevice(warp_device), ovstage.Stage("reversed-joint") as stage, ovstage.PathDictionary(stage) as pd:
+        _populate(stage, usda)
+        if import_mode == "add":
+            builder = newton.ModelBuilder()
+            ovnewton.add_ovstage(builder, stage)
+            binding = ovnewton.attach_ovstage(stage, model=builder.finalize())
+        else:
+            binding = ovnewton.attach_ovstage(stage)
+        model = binding.model
+        state = model.state()
+        control = model.control()
+        np.testing.assert_allclose(state.joint_q.numpy(), [5 * scale])
+        np.testing.assert_allclose(model.joint_axis.numpy(), [(-1, 0, 0)])
+        newton.eval_fk(model, state.joint_q, state.joint_qd, state)
+        if kind == "Revolute":
+            np.testing.assert_allclose(state.body_q.numpy()[0, 3:], (-0.0436194, 0, 0, 0.9990482), atol=1e-6)
+        else:
+            np.testing.assert_allclose(state.body_q.numpy()[0, :3], (-5, 0, 0))
+        columns = _unique_columns_by_name(binding.read(
+            state, control=control, query=binding.query(paths=["/World/Joint"]),
+            attributes=(
+                "joint_q", "jointPosition", "jointVelocity", "jointPositionTarget", "jointVelocityTarget", "jointLimit",
+            ),
+        ), pd)
+        for name, expected in (("joint_q", 5 * scale), ("jointPosition", 5), ("jointVelocity", 2),
+                               ("jointPositionTarget", 8), ("jointVelocityTarget", 3)):
+            np.testing.assert_allclose(_logical_values(columns[name]), [expected], rtol=1e-6)
+        np.testing.assert_allclose(_logical_values(columns["jointLimit"]), [(-10, np.finfo(np.float32).max)])
+
+        # Positive authored velocity moves the body along the reversed axis,
+        # both in FK and in an actual solver step on the selected device.
+        next_state = model.state()
+        solver = newton.solvers.SolverFeatherstone(model, angular_damping=0.0)
+        solver.step(state, next_state, control, None, 1 / 240)
+        assert next_state.joint_q.numpy()[0] > 5 * scale
+        newton.eval_fk(model, next_state.joint_q, next_state.joint_qd, next_state)
+        component = 3 if kind == "Revolute" else 0
+        assert next_state.body_q.numpy()[0, component] < state.body_q.numpy()[0, component]
+
+
+@pytest.mark.parametrize("import_mode", ["attach", "add"])
+@pytest.mark.parametrize("partial_limit", ["low = -5", "high = 10"])
+def test_reversed_d6_ignores_incomplete_axes(warp_device, import_mode, partial_limit):
+    usda = f'''#usda 1.0
+def Xform "World" (prepend apiSchemas = ["PhysicsArticulationRootAPI"]) {{
+    def Xform "Body" (prepend apiSchemas = ["PhysicsRigidBodyAPI"]) {{}}
+    def PhysicsJoint "Joint" (prepend apiSchemas = ["PhysicsLimitAPI:transX"]) {{
+        rel physics:body0 = </World/Body>
+        float limit:transX:physics:low = -15
+        float limit:transX:physics:high = 25
+        float limit:transY:physics:{partial_limit}
+    }}
+}}
+'''
+    with wp.ScopedDevice(warp_device), ovstage.Stage("partial-d6") as stage, ovstage.PathDictionary(stage) as pd:
+        _populate(stage, usda)
+        if import_mode == "add":
+            builder = newton.ModelBuilder()
+            ovnewton.add_ovstage(builder, stage)
+            binding = ovnewton.attach_ovstage(stage, model=builder.finalize())
+        else:
+            binding = ovnewton.attach_ovstage(stage)
+        state = binding.model.state()
+        state.joint_q.assign([1])
+        columns = _unique_columns_by_name(binding.read(
+            state, query=binding.query(paths=["/World/Joint"]), attributes=("joint_q", "jointPosition", "jointLimit"),
+        ), pd)
+        np.testing.assert_allclose(_logical_values(columns["joint_q"]), [1])
+        np.testing.assert_allclose(_logical_values(columns["jointPosition"]), [1])
+        np.testing.assert_allclose(_logical_values(columns["jointLimit"]), [(-15, 25)])
+
+
+@pytest.mark.parametrize("merged", [False, True], ids=["native-d6", "merged"])
+@pytest.mark.parametrize("bad_target_is_bound", [False, True], ids=["unbound", "bound"])
+def test_caller_owned_d6_validates_only_bound_joints(warp_device, merged, bad_target_is_bound):
+    if merged:
+        joints = '''def PhysicsPrismaticJoint "Joint" {
+            rel physics:body0 = </World/Body>
+        }
+        def PhysicsPrismaticJoint "SecondAxis" {
+            rel physics:body0 = </World/Body>
+            uniform token physics:axis = "Y"
+        }'''
+    else:
+        joints = '''def PhysicsJoint "Joint" (
+            prepend apiSchemas = ["PhysicsLimitAPI:transX", "PhysicsLimitAPI:transY"]
+        ) {
+            rel physics:body0 = </World/Body>
+            float limit:transX:physics:low = -15
+            float limit:transX:physics:high = 25
+            float limit:transY:physics:low = -5
+            float limit:transY:physics:high = 10
+        }'''
+    if bad_target_is_bound:
+        joints = joints.replace("</World/Body>", "[</World/Body>, </World/OtherBody>]")
+    usda = f'''#usda 1.0
+def Xform "World" {{
+    def Xform "Body" (prepend apiSchemas = ["PhysicsRigidBodyAPI"]) {{}}
+    def Xform "OtherBody" (prepend apiSchemas = ["PhysicsRigidBodyAPI"]) {{}}
+    {joints}
+    def PhysicsPrismaticJoint "Unbound" {{
+        rel physics:body0 = [</World/Body>, </World/OtherBody>]
+    }}
+}}
+'''
+    with wp.ScopedDevice(warp_device), ovstage.Stage("partial-d6-binding") as stage:
+        _populate(stage, usda)
+        builder = newton.ModelBuilder()
+        body = builder.add_link(label="/World/Body")
+        joint = builder.add_joint_d6(-1, body, linear_axes=[
+            newton.ModelBuilder.JointDofConfig(axis=(-1, 0, 0), limit_lower=-15, limit_upper=25),
+            newton.ModelBuilder.JointDofConfig(axis=(0, -1, 0), limit_lower=-5, limit_upper=10),
+        ], label="/World/Joint")
+        builder.add_articulation([joint])
+        model = builder.finalize()
+        if bad_target_is_bound:
+            with pytest.raises(ValueError, match="joint /World/Joint has more than one body target"):
+                ovnewton.attach_ovstage(stage, model=model)
+            return
+        binding = ovnewton.attach_ovstage(stage, model=model)
+        state = model.state()
+        state.joint_q.assign([1, 2])
+        result = binding.read(
+            state, query=binding.query(paths=["/World/Joint"]), attributes=("jointPosition", "jointLimit"),
+        )
+        position, limits = result.groups[0].columns
+        np.testing.assert_allclose(_logical_values(position), [[1, 2]])
+        np.testing.assert_allclose(_logical_values(limits), [[-15, 25, -5, 10]])
 
 
 @pytest.mark.parametrize("target", ["/Missing", "/World/OtherBody", "/World/Body/Anchor"])
@@ -1185,31 +1662,31 @@ def test_output_read_borrows_complete_native_state(device, explicit_query, monke
                 attributes=("body_q", "body_qd", "joint_q", "joint_qd"),
             )
         assert launches == []
-        groups = _groups_by_name(result, pd)
-        assert groups["body_q"].tensor(0).data == state.body_q.ptr
-        assert groups["body_qd"].tensor(0).data == state.body_qd.ptr
-        assert groups["body_q"].data_index_tensor() is None
-        assert groups["body_q"].data_index_array() is None
-        assert groups["body_q"].data_index_dlpack() is None
+        columns = _unique_columns_by_name(result, pd)
+        assert columns["body_q"].tensor(0).data == state.body_q.ptr
+        assert columns["body_qd"].tensor(0).data == state.body_qd.ptr
+        assert columns["body_q"].data_index_tensor() is None
+        assert columns["body_q"].data_index_array() is None
+        assert columns["body_q"].data_index_dlpack() is None
 
-        assert groups["joint_q"].tensor(0).data == state.joint_q.ptr + q_start * 4
-        assert groups["joint_qd"].tensor(0).data == state.joint_qd.ptr + qd_start * 4
+        assert columns["joint_q"].tensor(0).data == state.joint_q.ptr + q_start * 4
+        assert columns["joint_qd"].tensor(0).data == state.joint_qd.ptr + qd_start * 4
 
         with pytest.raises(ValueError, match="read-only"):
-            groups["body_q"].dlpack(0, readonly=False)
+            columns["body_q"].dlpack(0, readonly=False)
         if device == "cpu":
-            body_q = groups["body_q"].array(0)
+            body_q = columns["body_q"].array(0)
             assert not body_q.flags.writeable
             updated = state.body_q.numpy()
             updated[0, 0] += 1.0
             state.body_q.assign(wp.array(updated, dtype=wp.transformf, device=binding.model.device))
             assert body_q.reshape(-1, 7)[0, 0] == updated[0, 0]
-            assert all(group.cuda_sync.wait_event == 0 for group in result.groups)
+            assert all(column.cuda_sync.wait_event == 0 for group, column in _column_items(result))
         else:
-            assert all(group.cuda_sync.wait_event for group in result.groups)
+            assert all(column.cuda_sync.wait_event for group, column in _column_items(result))
 
 
-def test_output_group_matches_ovstage_read_group_accessors():
+def test_output_matches_ovstage_group_and_column_accessors():
     with ovstage.Stage("output-read-protocol") as stage, ovstage.PathDictionary(stage) as pd:
         _populate(stage, DRIVEN_REVOLUTE)
         binding = _binding(stage, pd)
@@ -1218,23 +1695,22 @@ def test_output_group_matches_ovstage_read_group_accessors():
         query = binding.query(paths=[selected_path])
         result = binding.read(binding.model.state(), query=query, attributes=("body_q",))
         output_group = result.groups[0]
-        # Newton output groups borrow caller-owned state and have no pinned
-        # ovstage storage to release.
-        required = {
-            name
-            for name in dir(ovstage.ReadGroup)
-            if not name.startswith("_") and name not in {"release", "released"}
-        }
-        assert required <= {name for name in dir(output_group) if not name.startswith("_")}
-        assert isinstance(output_group.meta, ovnewton.ReadGroupMeta)
-        assert isinstance(output_group.cuda_sync, ovnewton.ReadGroupCudaSync)
-        assert output_group.ordinal == 0
-        assert not output_group.is_delete
-        assert output_group.semantic == int(ovstage.AttributeSemantic.NONE)
-        assert output_group.meta.attribute_write_floor_ordinal == 0
-        assert output_group.meta.layout_generation == 0
-        assert output_group.cuda_sync.stream == 0
-        assert output_group.cuda_sync.wait_event == 0
+        output_column = output_group.columns[0]
+        # Newton buffers do not pin stage storage or need explicit release.
+        for actual, reference in ((output_group, ovstage.ReadGroup), (output_column, ovstage.ReadColumn)):
+            required = {name for name in dir(reference) if not name.startswith("_")} - {"release", "released"}
+            assert required <= {name for name in dir(actual) if not name.startswith("_")}
+        assert not hasattr(output_group, "attribute")
+        assert not hasattr(output_column, "prim_list")
+        assert isinstance(output_column.meta, ovnewton.ReadColumnMeta)
+        assert isinstance(output_column.cuda_sync, ovnewton.ReadColumnCudaSync)
+        assert output_column.ordinal == 0
+        assert not output_column.is_delete
+        assert output_column.semantic == int(ovstage.AttributeSemantic.NONE)
+        assert output_column.meta.attribute_write_floor_ordinal == 0
+        assert output_column.meta.layout_generation == 0
+        assert output_column.cuda_sync.stream == 0
+        assert output_column.cuda_sync.wait_event == 0
 
         with stage.query_from_path_list(output_group.prim_list) as stage_query:
             stage_query.wait()
@@ -1247,25 +1723,29 @@ def test_output_group_matches_ovstage_read_group_accessors():
                 stage_group = read.fetch_next()
                 try:
                     assert stage_group is not None
-                    assert not stage_group.is_delete
-                    output_layout = _dense_group_layout(output_group)
-                    stage_layout = _dense_group_layout(stage_group)
+                    column = stage_group.columns[0]
+                    assert not column.is_delete
+                    output_layout = _dense_group_layout(output_group, output_column)
+                    stage_layout = _dense_group_layout(stage_group, column)
                     for name in output_layout.keys() - {"data_rows", "has_data_index_map"}:
                         assert output_layout[name] == stage_layout[name]
-                    assert output_group.has_data_index_map
-                    assert output_group.data_row_index(0) == 1
+                    assert output_column.has_data_index_map
+                    assert output_column.data_row_index(0) == 1
                 finally:
                     if stage_group is not None:
                         stage.release_group(stage_group)
 
 
-def test_output_read_accepts_discovery_tokens_without_reverse_lookup(monkeypatch):
+@pytest.mark.parametrize("raw_token", [False, True])
+def test_output_read_accepts_discovery_tokens_without_reverse_lookup(monkeypatch, raw_token):
     with ovstage.Stage("output-read-tokens") as stage, ovstage.PathDictionary(stage) as pd:
         _populate(stage, DRIVEN_REVOLUTE)
         binding = _binding(stage, pd)
 
         query = binding.query(paths=["/Arm"])
         body_q = next(token for token in query.attributes if pd.token_to_string(token) == "body_q")
+        if raw_token:
+            body_q = body_q.raw_id
 
         def unexpected_reverse_lookup(_token):
             raise AssertionError("unexpected reverse token lookup")
@@ -1273,16 +1753,16 @@ def test_output_read_accepts_discovery_tokens_without_reverse_lookup(monkeypatch
         monkeypatch.setattr(binding._pd, "token_to_string", unexpected_reverse_lookup)
         result = binding.read(binding.model.state(), query=query, attributes=(body_q, "body_q"))
         assert len(result.groups) == 1
-        assert pd.token_to_string(result.groups[0].attribute) == "body_q"
+        assert pd.token_to_string(result.groups[0].columns[0].attribute) == "body_q"
 
         result = binding.read(binding.model.state(), query=query, attributes=())
         assert result.groups == ()
 
 
-def test_output_views_retain_query_storage_until_last_reference_drops(monkeypatch):
+def test_output_views_retain_query_storage_until_last_reference_drops(monkeypatch, warp_device):
     with ovstage.Stage("output-read-owner") as stage, ovstage.PathDictionary(stage) as pd:
         _populate(stage, DRIVEN_REVOLUTE)
-        binding = _binding(stage, pd)
+        binding = _binding(stage, pd, str(warp_device))
         destroyed = []
         destroy_path_list = binding._pd.destroy_path_list
 
@@ -1292,33 +1772,78 @@ def test_output_views_retain_query_storage_until_last_reference_drops(monkeypatc
 
         monkeypatch.setattr(binding._pd, "destroy_path_list", tracked_destroy)
         query = binding.query(paths=[_body_path_at(binding, 1)])
-        result = binding.read(binding.model.state(), query=query, attributes=("body_q",))
+        state = binding.model.state()
+        expected_values = state.body_q.numpy().copy()
+        result = binding.read(state, query=query, attributes=("body_q",))
         group = result.groups[0]
+        column = group.columns[0]
         prim_list = group.prim_list
-        dlpack = group.dlpack(0)
-        data_index_dlpack = group.data_index_dlpack()
+        dlpack = column.dlpack(0)
+        data_index_dlpack = column.data_index_dlpack()
         query_ref = weakref.ref(query)
         result_ref = weakref.ref(result)
         group_ref = weakref.ref(group)
+        column_ref = weakref.ref(column)
 
-        del result, query, group
+        del result, query, group, column, state
         gc.collect()
         assert result_ref() is None
-        assert group_ref() is not None
+        assert group_ref() is None
+        assert column_ref() is not None
         assert query_ref() is not None
-        np.testing.assert_equal(wp.from_dlpack(dlpack).shape, (binding.model.body_count, 7))
-        np.testing.assert_equal(wp.from_dlpack(data_index_dlpack).shape, (1,))
+        np.testing.assert_array_equal(wp.from_dlpack(dlpack).numpy(), expected_values)
+        np.testing.assert_array_equal(wp.from_dlpack(data_index_dlpack).numpy(), [1])
 
         del dlpack
         gc.collect()
-        assert group_ref() is not None
+        assert column_ref() is not None
         assert query_ref() is not None
 
         del data_index_dlpack
         gc.collect()
-        assert group_ref() is None
+        assert column_ref() is None
         assert query_ref() is None
-        assert prim_list in destroyed
+        assert destroyed.count(prim_list) == 1
+
+
+def test_gathered_column_retains_storage_without_result_or_group(warp_device):
+    with wp.ScopedDevice(warp_device), ovstage.Stage("gathered-column-owner") as stage:
+        _populate(stage, MIXED_JOINT_WIDTHS)
+        producer = wp.Stream(warp_device) if warp_device.is_cuda else None
+        with wp.ScopedStream(producer) if producer else contextlib.nullcontext():
+            binding = ovnewton.attach_ovstage(stage)
+            state = binding.model.state()
+            query = binding.query(paths=["/World/HingeA", "/World/Ball"])
+            state.joint_q.fill_(3.5)
+            state.joint_qd.fill_(7.5)
+            result = binding.read(state, query=query, attributes=("joint_q", "joint_qd"))
+
+        # Mixed coordinate widths require a gather; keep only the ball's q column.
+        group = result.groups[1]
+        column = group.columns[0]
+        assert column.tensor(0).dtype.lanes == 4
+        assert bool(column.cuda_sync.wait_event) == warp_device.is_cuda
+        result_ref, group_ref, query_ref = weakref.ref(result), weakref.ref(group), weakref.ref(query)
+        del result, group, query, state
+        gc.collect()
+        assert result_ref() is None
+        assert group_ref() is None
+        assert query_ref() is not None
+
+        consumer = wp.Stream(warp_device) if warp_device.is_cuda else None
+        with wp.ScopedStream(consumer) if consumer else contextlib.nullcontext():
+            if consumer is not None:
+                ready = wp.Event(warp_device, cuda_event=column.cuda_sync.wait_event)
+                consumer.wait_event(ready)
+            snapshot = wp.empty((1, 4), dtype=wp.float32, device=warp_device)
+            wp.copy(snapshot, wp.from_dlpack(column.dlpack(0)))
+            if consumer is not None:
+                wp.synchronize_stream(consumer)
+        np.testing.assert_array_equal(snapshot.numpy(), [[3.5, 3.5, 3.5, 3.5]])
+
+        del column
+        gc.collect()
+        assert query_ref() is None
 
 
 def test_output_read_validates_only_requested_sources():
@@ -1356,9 +1881,10 @@ def test_output_read_indexes_in_explicit_path_order():
         query = binding.query(paths=["/Arm", "/Base"])
         result = binding.read(state, query=query, attributes=("body_q",))
         group = result.groups[0]
+        column = group.columns[0]
         assert pd.get_path_strings(group.prim_list) == ["/Arm", "/Base"]
         expected = [state.body_q.numpy()[list(binding.model.body_label).index(path)] for path in ("/Arm", "/Base")]
-        np.testing.assert_allclose(_logical_values(group), expected)
+        np.testing.assert_allclose(_logical_values(column), expected)
 
 
 @pytest.mark.parametrize(
@@ -1413,7 +1939,7 @@ def test_output_read_preserves_newton_multivalue_joint_layouts(usda, path, q_val
         state.joint_q.assign(wp.array(joint_q, dtype=wp.float32, device=binding.model.device))
         state.joint_qd.assign(wp.array(joint_qd, dtype=wp.float32, device=binding.model.device))
 
-        groups = _groups_by_name(
+        columns = _unique_columns_by_name(
             binding.read(
                 state,
                 query=binding.query(paths=[path]),
@@ -1422,11 +1948,11 @@ def test_output_read_preserves_newton_multivalue_joint_layouts(usda, path, q_val
             pd,
         )
         np.testing.assert_array_equal(
-            _logical_values(groups["joint_q"]).reshape(-1),
+            _logical_values(columns["joint_q"]).reshape(-1),
             np.asarray(q_values, dtype=np.float32),
         )
         np.testing.assert_array_equal(
-            _logical_values(groups["joint_qd"]).reshape(-1),
+            _logical_values(columns["joint_qd"]).reshape(-1),
             np.asarray(qd_values, dtype=np.float32),
         )
 
@@ -1459,21 +1985,21 @@ def test_output_read_preserves_newton_single_dof_units(usda, channel, angular):
         state = binding.model.state()
         binding.update_from_ovstage(state, control=binding.model.control(), ordinal=2)
         query = binding.query(paths=["/Joint"])
-        groups = _groups_by_name(
+        columns = _unique_columns_by_name(
             binding.read(state, query=query, attributes=("joint_q", "joint_qd")),
             pd,
         )
 
         scale = np.pi / 180.0 if angular else 1.0
-        np.testing.assert_allclose(_logical_values(groups["joint_q"]), (12.0 * scale,))
-        np.testing.assert_allclose(_logical_values(groups["joint_qd"]), (34.0 * scale,))
+        np.testing.assert_allclose(_logical_values(columns["joint_q"]), (12.0 * scale,))
+        np.testing.assert_allclose(_logical_values(columns["joint_qd"]), (34.0 * scale,))
 
 
 @pytest.mark.parametrize(
     "device",
     ["cpu", pytest.param("cuda:0", marks=pytest.mark.skipif(not wp.is_cuda_available(), reason="CUDA not available"))],
 )
-def test_output_read_batches_joint_groups_by_coordinate_width(device, monkeypatch):
+def test_output_read_batches_mixed_width_joint_columns(device, monkeypatch):
     with ovstage.Stage("output-read-joint-widths") as stage, ovstage.PathDictionary(stage) as pd:
         _populate(stage, MIXED_JOINT_WIDTHS)
         binding = _binding(stage, pd, device)
@@ -1506,35 +2032,40 @@ def test_output_read_batches_joint_groups_by_coordinate_width(device, monkeypatc
         monkeypatch.setattr(wp, "launch", tracked_launch)
         result = binding.read(state, query=query, attributes=("joint_q", "joint_qd"))
         assert len(launches) == 2
-        groups = {}
+        assert len(result.groups) == 2
         for group in result.groups:
-            name = pd.token_to_string(group.attribute)
-            width = int(group.tensor(0).dtype.lanes)
-            groups[name, width] = group
+            assert [pd.token_to_string(column.attribute) for column in group.columns] == ["joint_q", "joint_qd"]
+            assert all(column.data_count == group.prim_count for column in group.columns)
+        columns = {}
+        for group, column in _column_items(result):
+            name = pd.token_to_string(column.attribute)
+            width = int(column.tensor(0).dtype.lanes)
+            columns[name, width] = (group, column)
 
-        assert set(groups) == {("joint_q", 1), ("joint_q", 4), ("joint_qd", 1), ("joint_qd", 3)}
-        assert all(not group.is_array and group.tensor_count == 1 for group in result.groups)
+        assert set(columns) == {("joint_q", 1), ("joint_q", 4), ("joint_qd", 1), ("joint_qd", 3)}
+        assert all(not column.is_array and column.tensor_count == 1 for group, column in _column_items(result))
 
-        q_scalar = groups["joint_q", 1]
-        assert q_scalar.prim_count == 2
-        assert pd.get_path_strings(q_scalar.prim_list) == ["/World/HingeB", "/World/HingeA"]
+        q_scalar_group, q_scalar = columns["joint_q", 1]
+        assert q_scalar_group.prim_count == 2
+        assert pd.get_path_strings(q_scalar_group.prim_list) == ["/World/HingeB", "/World/HingeA"]
         assert not q_scalar.has_data_index_map
         np.testing.assert_array_equal(_logical_values(q_scalar).reshape(2, 1), ((2.0,), (1.0,)))
 
-        q_ball = groups["joint_q", 4]
-        assert pd.get_path_strings(q_ball.prim_list) == ["/World/Ball"]
+        q_ball_group, q_ball = columns["joint_q", 4]
+        assert result.groups == (q_scalar_group, q_ball_group)
+        assert pd.get_path_strings(q_ball_group.prim_list) == ["/World/Ball"]
         np.testing.assert_allclose(
             _logical_values(q_ball).reshape(1, 4),
             ((0.1, 0.2, 0.3, 0.9),),
         )
 
-        qd_scalar = groups["joint_qd", 1]
-        assert pd.get_path_strings(qd_scalar.prim_list) == ["/World/HingeB", "/World/HingeA"]
+        qd_scalar_group, qd_scalar = columns["joint_qd", 1]
+        assert qd_scalar_group is q_scalar_group
         assert not qd_scalar.has_data_index_map
         np.testing.assert_array_equal(_logical_values(qd_scalar).reshape(2, 1), ((20.0,), (10.0,)))
 
-        qd_ball = groups["joint_qd", 3]
-        assert pd.get_path_strings(qd_ball.prim_list) == ["/World/Ball"]
+        qd_ball_group, qd_ball = columns["joint_qd", 3]
+        assert qd_ball_group is q_ball_group
         np.testing.assert_array_equal(
             _logical_values(qd_ball).reshape(1, 3),
             ((3.0, 4.0, 5.0),),
@@ -1543,28 +2074,28 @@ def test_output_read_batches_joint_groups_by_coordinate_width(device, monkeypatc
         launches.clear()
         complete = binding.read(state, attributes=("joint_q", "joint_qd"))
         assert len(launches) == 2
-        for group in complete.groups:
-            name = pd.token_to_string(group.attribute)
+        for group, column in _column_items(complete):
+            name = pd.token_to_string(column.attribute)
             value_index = 0 if name == "joint_q" else 1
             expected = [values[path][value_index] for path in pd.get_path_strings(group.prim_list)]
             np.testing.assert_allclose(
-                _logical_values(group).reshape(group.prim_count, -1),
+                _logical_values(column).reshape(group.prim_count, -1),
                 expected,
             )
-            assert not group.has_data_index_map
+            assert not column.has_data_index_map
 
         hinges = binding.query(paths=["/World/HingeB", "/World/HingeA"])
         launches.clear()
         selected = binding.read(state, query=hinges, attributes=("joint_q", "joint_qd"))
         assert launches == []
-        groups = _groups_by_name(selected, pd)
-        assert groups["joint_q"].tensor(0).data == state.joint_q.ptr + int(q_start[labels.index("/World/HingeA")]) * 4
-        assert groups["joint_qd"].tensor(0).data == (
+        columns = _unique_columns_by_name(selected, pd)
+        assert columns["joint_q"].tensor(0).data == state.joint_q.ptr + int(q_start[labels.index("/World/HingeA")]) * 4
+        assert columns["joint_qd"].tensor(0).data == (
             state.joint_qd.ptr + int(qd_start[labels.index("/World/HingeA")]) * 4
         )
-        assert all(group.has_data_index_map for group in groups.values())
-        np.testing.assert_array_equal(_logical_values(groups["joint_q"]).reshape(2, 1), ((2.0,), (1.0,)))
-        np.testing.assert_array_equal(_logical_values(groups["joint_qd"]).reshape(2, 1), ((20.0,), (10.0,)))
+        assert all(column.has_data_index_map for column in columns.values())
+        np.testing.assert_array_equal(_logical_values(columns["joint_q"]).reshape(2, 1), ((2.0,), (1.0,)))
+        np.testing.assert_array_equal(_logical_values(columns["joint_qd"]).reshape(2, 1), ((20.0,), (10.0,)))
 
 
 def test_selected_output_results_share_sources_with_distinct_indices():
@@ -1577,18 +2108,20 @@ def test_selected_output_results_share_sources_with_distinct_indices():
         second = binding.query(paths=[_body_path_at(binding, 1)])
         first_result = binding.read(state, query=first, attributes=("body_q",))
         second_result = binding.read(state, query=second, attributes=("body_q",))
-        assert first_result.groups[0].tensor(0).data == state.body_q.ptr
-        assert second_result.groups[0].tensor(0).data == state.body_q.ptr
-        assert first_result.groups[0].data_index_tensor() is None
-        assert second_result.groups[0].data_index_tensor() is not None
-        assert first_result.groups[0].data_row_index(0) != second_result.groups[0].data_row_index(0)
+        first_column = first_result.groups[0].columns[0]
+        second_column = second_result.groups[0].columns[0]
+        assert first_column.tensor(0).data == state.body_q.ptr
+        assert second_column.tensor(0).data == state.body_q.ptr
+        assert first_column.data_index_tensor() is None
+        assert second_column.data_index_tensor() is not None
+        assert first_column.data_row_index(0) != second_column.data_row_index(0)
         binding.update_to_ovstage(state, ordinal=2)
 
         result = binding.read(state, attributes=("body_q", "body_qd"))
-        assert len(result.groups) == 2
-        groups = _groups_by_name(result, pd)
-        assert groups["body_q"].tensor(0).data == state.body_q.ptr
-        assert groups["body_qd"].tensor(0).data == state.body_qd.ptr
+        assert len(result.groups) == 1
+        columns = _unique_columns_by_name(result, pd)
+        assert columns["body_q"].tensor(0).data == state.body_q.ptr
+        assert columns["body_qd"].tensor(0).data == state.body_qd.ptr
 
 
 def test_query_validation_is_strict_only_for_explicit_paths():
@@ -1651,14 +2184,14 @@ def test_output_read_cuda_group_is_device_resident(monkeypatch):
         query = binding.query(paths=[_body_path_at(binding, 1)])
         with wp.ScopedStream(stream):
             result = binding.read(state, query=query, attributes=("body_q", "body_qd"))
-            assert len(result.groups) == 2
-            for group in result.groups:
-                assert group.tensor(0).device.device_type.value == ovstage.DLDeviceType.kDLCUDA
-                assert group.data_index_tensor().device.device_type.value == ovstage.DLDeviceType.kDLCUDA
-                assert group.cuda_sync.stream == 0
-                assert group.cuda_sync.wait_event
+            assert len(result.groups) == 1
+            for group, column in _column_items(result):
+                assert column.tensor(0).device.device_type.value == ovstage.DLDeviceType.kDLCUDA
+                assert column.data_index_tensor().device.device_type.value == ovstage.DLDeviceType.kDLCUDA
+                assert column.cuda_sync.stream == 0
+                assert column.cuda_sync.wait_event
                 with pytest.raises(NotImplementedError):
-                    group.array(0)
+                    column.array(0)
         assert launches == []
 
 
@@ -1683,9 +2216,9 @@ def test_output_reads_do_not_wait_for_other_results(monkeypatch):
             first = binding.read(state, query=query, attributes=("body_q",))
         with wp.ScopedStream(second_stream):
             second = binding.read(state, query=query, attributes=("body_q",))
-        assert first.groups[0].cuda_sync.wait_event
-        assert second.groups[0].cuda_sync.wait_event
-        assert first.groups[0].cuda_sync.wait_event != second.groups[0].cuda_sync.wait_event
+        assert first.groups[0].columns[0].cuda_sync.wait_event
+        assert second.groups[0].columns[0].cuda_sync.wait_event
+        assert first.groups[0].columns[0].cuda_sync.wait_event != second.groups[0].columns[0].cuda_sync.wait_event
         assert waits == []
 
 
@@ -1707,13 +2240,13 @@ def test_output_read_cuda_graph_captures_zero_copy_reads():
 
             wp.capture_launch(capture.graph, stream=stream)
             wp.synchronize_stream(stream)
-            groups = _groups_by_name(result, pd)
+            columns = _unique_columns_by_name(result, pd)
             arm = list(binding.model.body_label).index("/Arm")
             np.testing.assert_allclose(
-                _logical_values(groups["body_q"])[0],
+                _logical_values(columns["body_q"])[0],
                 state.body_q.numpy()[arm],
             )
             np.testing.assert_allclose(
-                _logical_values(groups["body_qd"])[0],
+                _logical_values(columns["body_qd"])[0],
                 state.body_qd.numpy()[arm],
             )

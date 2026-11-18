@@ -207,8 +207,9 @@ def test_disabled_joint_equality_matches_newton(tmp_path, flag):
 
 @pytest.mark.parametrize("polynomial", [False, True])
 @pytest.mark.parametrize("angular", [False, True])
-def test_mujoco_enforces_joint_equality_and_state_roundtrip(polynomial, angular):
+def test_mujoco_enforces_joint_equality_and_state_roundtrip(polynomial, angular, warp_device):
     pytest.importorskip("mujoco")
+    pytest.importorskip("mujoco_warp")
     usda = (
         JOINT.replace("float newton:mimicCoef0 = 0", "float newton:mimicCoef0 = 0\n        float mjc:coef2 = 0.5")
         if polynomial
@@ -216,12 +217,13 @@ def test_mujoco_enforces_joint_equality_and_state_roundtrip(polynomial, angular)
     )
     if angular:
         usda = usda.replace("PhysicsPrismaticJoint", "PhysicsRevoluteJoint")
-    with wp.ScopedDevice("cpu"), ovstage.Stage("joint-equality-solver") as stage:
+    with wp.ScopedDevice(warp_device), ovstage.Stage("joint-equality-solver") as stage:
         _populate(stage, usda)
         binding = ovnewton.attach_ovstage(stage)
         model = binding.model
-        solver = newton.solvers.SolverMuJoCo(model, use_mujoco_cpu=True)
-        assert solver.mj_model.neq == 1
+        solver = newton.solvers.SolverMuJoCo(model)
+        # Newton may reserve inactive welds for switching roots to kinematic.
+        assert np.count_nonzero(solver.mjw_model.eq_active0.numpy()) == 1
         state, next_state = model.state(), model.state()
         velocity = model.joint_qd.numpy()
         velocity_starts = model.joint_qd_start.numpy()
@@ -398,7 +400,7 @@ def test_equality_population_composes_with_other_descriptions(usda):
             usda,
             ordinal=1,
             time=population.DEFAULT_TIME,
-            descs=[population.Desc(domains=PopulationDomain.ALL), ovnewton.population_desc()],
+            descs=[population.Desc(domains=PopulationDomain.RENDERING), ovnewton.population_desc()],
         )
         stage.advance_write_floor(ordinal=1).wait()
         model = ovnewton.attach_ovstage(stage).model
@@ -416,16 +418,20 @@ def test_equality_population_composes_with_other_descriptions(usda):
 )
 def test_equality_requires_preserved_metadata(usda, schema, path):
     with ovstage.Stage("equality-without-metadata") as stage, ovstage.PathDictionary(stage) as pd:
-        population.open_usd_from_string(stage, usda, ordinal=1, domains=PopulationDomain.PHYSICS)
+        population.open_usd_from_string_with_desc(
+            stage, usda, ordinal=1, time=population.DEFAULT_TIME, descs=[ovnewton.population_desc()]
+        )
         stage.advance_write_floor(ordinal=1).wait()
         paths = pd.create_path_list_from_strings([path])
         try:
             with stage.query_from_path_list(paths) as query:
+                stage.delete_attributes(query, ["usd-metadata:apiSchemas"], ordinal=2).wait()
+                token = pd.intern_token(schema)
                 stage.write_attribute(
                     query,
                     "usd-schemas",
                     ordinal=2,
-                    tensors=np.asarray([pd.intern_token(schema)], dtype=np.uint64),
+                    tensors=np.asarray([token.raw_id], dtype=np.uint64),
                     is_array=True,
                 ).wait()
             stage.advance_write_floor(ordinal=2).wait()
@@ -443,11 +449,12 @@ def test_joint_equality_requires_readable_prim_type():
         paths = pd.create_path_list_from_strings(["/Follower"])
         try:
             with stage.query_from_path_list(paths) as query:
+                token = pd.intern_token("MjcEqualityJointAPI")
                 stage.write_attribute(
                     query,
                     "usd-metadata:apiSchemas",
                     ordinal=2,
-                    tensors=np.asarray([pd.intern_token("MjcEqualityJointAPI")], dtype=np.uint64),
+                    tensors=np.asarray([token.raw_id], dtype=np.uint64),
                     is_array=True,
                 ).wait()
             stage.advance_write_floor(ordinal=2).wait()
@@ -472,7 +479,11 @@ def test_parallel_equalities_remain_separate_from_tree_joints():
         assert set(eq.equality_constraint_type.numpy()) == {0, 1}
 
 
-@pytest.mark.parametrize("usda", [CONNECT, WELD], ids=["connect", "weld"])
+@pytest.mark.parametrize(
+    "usda",
+    [CONNECT, WELD, WELD.replace("mjc:torqueScale = 2.5", "mjc:torqueScale = 0")],
+    ids=["connect", "weld", "weld-zero-torque"],
+)
 @pytest.mark.parametrize("endpoint", ["world-body", "body-world", "body-body"])
 @pytest.mark.parametrize("scaled", [False, True])
 def test_equality_matches_newton_add_usd(tmp_path, usda, endpoint, scaled):
@@ -568,19 +579,21 @@ def test_equality_defaults(usda):
 
 
 @pytest.mark.parametrize("usda", [CONNECT, WELD], ids=["connect", "weld"])
-def test_mujoco_enforces_equality_without_duplicate_constraints(usda):
+def test_mujoco_enforces_equality_without_duplicate_constraints(usda, warp_device):
     pytest.importorskip("mujoco")
+    pytest.importorskip("mujoco_warp")
     # Put both frames at the body origin and let gravity act for half a second.
     usda = "\n".join(line for line in usda.splitlines() if "physics:local" not in line and "mjc:" not in line)
-    with wp.ScopedDevice("cpu"), ovstage.Stage("equality-solver") as stage:
+    with wp.ScopedDevice(warp_device), ovstage.Stage("equality-solver") as stage:
         _populate(stage, usda)
         builder = newton.ModelBuilder()
         newton.solvers.SolverMuJoCo.register_custom_attributes(builder)
         result = ovnewton.add_ovstage(builder, stage)
         model = builder.finalize(skip_validation_joints=result.has_orphan_joints)
         binding = ovnewton.attach_ovstage(stage, model=model)
-        solver = newton.solvers.SolverMuJoCo(model, use_mujoco_cpu=True)
-        assert solver.mj_model.neq == 1
+        solver = newton.solvers.SolverMuJoCo(model)
+        # Newton may reserve inactive welds for switching roots to kinematic.
+        assert np.count_nonzero(solver.mjw_model.eq_active0.numpy()) == 1
         state, next_state = model.state(), model.state()
         newton.eval_fk(model, model.joint_q, model.joint_qd, state)
         for _ in range(120):
@@ -595,7 +608,8 @@ def test_mujoco_enforces_equality_without_duplicate_constraints(usda):
         query = binding.query(paths=["/World/Body"])
         result = binding.read(state, query=query, attributes=["body_q"])
         assert result.groups
-        np.testing.assert_allclose(result.groups[0].array(0).reshape(-1, 7), state.body_q.numpy())
+        values = wp.from_dlpack(result.groups[0].columns[0].dlpack(0)).numpy()
+        np.testing.assert_allclose(values.reshape(-1, 7), state.body_q.numpy())
 
 
 @pytest.mark.parametrize(

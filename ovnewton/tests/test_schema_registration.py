@@ -14,7 +14,7 @@ from ovstage import PopulationDomain, population
 import ovnewton
 
 
-@pytest.mark.parametrize("domains", (PopulationDomain.PHYSICS, PopulationDomain.ALL))
+@pytest.mark.parametrize("domains", (PopulationDomain.NONE, PopulationDomain.RENDERING))
 @pytest.mark.parametrize("import_mode", ("add", "attach"))
 def test_population_desc_preserves_unregistered_schema(domains, import_mode):
     usda = '''#usda 1.0
@@ -93,14 +93,26 @@ def PhysicsFixedJoint "Joint" {
 }
 '''
     with ovstage.Stage("schema-column-only") as stage, ovstage.PathDictionary(stage) as pd:
-        population.open_usd_from_string(stage, usda, ordinal=1, domains=PopulationDomain.PHYSICS)
+        # Deliberately omit apiSchemas metadata to exercise a caller that has
+        # not populated with ovnewton.population_desc().
+        population.open_usd_from_string_with_desc(
+            stage, usda, ordinal=1, time=population.DEFAULT_TIME,
+            descs=(population.Desc(
+                selectors=(population.Selector(
+                    prim_predicate=population.PrimPredicate.all(),
+                    property_predicate=population.PropertyPredicate.in_namespace("physics"),
+                ),),
+                stage_metadata_paths=("metersPerUnit", "upAxis"),
+            ),),
+        )
         stage.advance_write_floor(1).wait()
         paths = pd.create_path_list_from_strings(["/Joint"])
         try:
             with stage.query_from_path_list(paths) as query:
+                schema_token = pd.intern_token("MjcJointAPI")
                 stage.write_attribute(
                     query, "usd-schemas", ordinal=2,
-                    tensors=np.asarray([pd.intern_token("MjcJointAPI")], dtype=np.uint64),
+                    tensors=np.asarray([schema_token.raw_id], dtype=np.uint64),
                     is_array=True,
                 ).wait()
             stage.advance_write_floor(2).wait()
@@ -117,7 +129,7 @@ def test_register_required_usd_schemas_before_population():
         '''
         import ovnewton
         import ovstage
-        from ovstage import PopulationDomain, population
+        from ovstage import population
 
         from ovnewton._src._parse import _api_paths, read_stage_units
         from ovnewton._src._stage import _path_list_query, read_columns
@@ -143,7 +155,10 @@ def test_register_required_usd_schemas_before_population():
         """
 
         with ovstage.Stage("ovnewton-schema-registration") as stage, ovstage.PathDictionary(stage) as pd:
-            population.open_usd_from_string(stage, usda, ordinal=1, domains=PopulationDomain.PHYSICS)
+            population.open_usd_from_string_with_desc(
+                stage, usda, ordinal=1, time=population.DEFAULT_TIME,
+                descs=(ovnewton.population_desc(),),
+            )
             stage.advance_write_floor(ordinal=1).wait()
 
             assert read_stage_units(stage, pd, 1) == (0.5, "Y")
@@ -152,10 +167,10 @@ def test_register_required_usd_schemas_before_population():
             with _path_list_query(stage, pd, ["/Joint"]) as query:
                 columns = read_columns(
                     stage, pd, query,
-                    ("newton:armature", "state:angular:physics:position", "state:angular:physics:velocity"),
+                    ("newton:velocityLimit", "state:angular:physics:position", "state:angular:physics:velocity"),
                     1,
                 )
-            assert columns["newton:armature"][0].tolist() == [0.0]
+            assert columns["newton:velocityLimit"][0].tolist() == [float("inf")]
             assert columns["state:angular:physics:position"][0].tolist() == [0.0]
             assert columns["state:angular:physics:velocity"][0].tolist() == [0.0]
 

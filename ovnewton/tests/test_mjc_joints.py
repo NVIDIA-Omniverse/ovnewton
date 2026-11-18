@@ -59,8 +59,9 @@ def test_mjc_joint_dynamics_match_add_usd(tmp_path, joint_type):
 
 @pytest.mark.parametrize("joint_type", ["PhysicsRevoluteJoint", "PhysicsPrismaticJoint"])
 @pytest.mark.parametrize("solref", ["[0.04, 0.8]", "[-200, -10]", None])
-def test_mjc_joint_solver_parameters_match_add_usd(tmp_path, joint_type, solref):
+def test_mjc_joint_solver_parameters_match_add_usd(tmp_path, joint_type, solref, warp_device):
     pytest.importorskip("mujoco")
+    pytest.importorskip("mujoco_warp")
     properties = """double mjc:margin = 0.03
     double[] mjc:solimplimit = [0.8, 0.9, 0.002, 0.4, 3]
     double[] mjc:solreffriction = [0.03, 0.7]
@@ -76,7 +77,7 @@ def test_mjc_joint_solver_parameters_match_add_usd(tmp_path, joint_type, solref)
     )
     asset = tmp_path / "joint.usda"
     asset.write_text(usda)
-    with wp.ScopedDevice("cpu"), ovstage.Stage("mjc-joint-solver") as stage:
+    with wp.ScopedDevice(warp_device), ovstage.Stage("mjc-joint-solver") as stage:
         reference = newton.ModelBuilder()
         builder = newton.ModelBuilder()
         for target in (reference, builder):
@@ -86,14 +87,16 @@ def test_mjc_joint_solver_parameters_match_add_usd(tmp_path, joint_type, solref)
         ovnewton.add_ovstage(builder, stage)
         model, reference_model = builder.finalize(), reference.finalize()
         assert ovnewton.attach_ovstage(stage, model=model).model is model
+        for field in ("joint_stiffness", "joint_rest_q"):
+            np.testing.assert_allclose(
+                getattr(model, field).numpy(), getattr(reference_model, field).numpy(), err_msg=field
+            )
         for field in (
             "limit_margin",
             "solreflimit",
             "solimplimit",
             "solreffriction",
             "solimpfriction",
-            "dof_passive_stiffness",
-            "dof_springref",
             "dof_ref",
             "jnt_actgravcomp",
             "solreflimit_mode",
@@ -102,10 +105,12 @@ def test_mjc_joint_solver_parameters_match_add_usd(tmp_path, joint_type, solref)
             np.testing.assert_allclose(
                 getattr(model.mujoco, field).numpy(), getattr(reference_model.mujoco, field).numpy(), err_msg=field
             )
-        solver = newton.solvers.SolverMuJoCo(model, use_mujoco_cpu=True)
-        reference_solver = newton.solvers.SolverMuJoCo(reference_model, use_mujoco_cpu=True)
+        solver = newton.solvers.SolverMuJoCo(model)
+        reference_solver = newton.solvers.SolverMuJoCo(reference_model)
         for field in ("jnt_solref", "jnt_solimp", "jnt_margin", "jnt_stiffness", "dof_damping", "dof_armature"):
-            np.testing.assert_allclose(getattr(solver.mj_model, field), getattr(reference_solver.mj_model, field))
+            np.testing.assert_allclose(
+                getattr(solver.mjw_model, field).numpy(), getattr(reference_solver.mjw_model, field).numpy()
+            )
 
 
 @pytest.mark.parametrize("property_type,values", [("float2", "(0.04, 0.8)"), ("double[]", "[0.04, 0.8]")])
@@ -176,28 +181,21 @@ def test_invalid_mjc_joint_dynamics_are_rejected(property_name):
             ovnewton.attach_ovstage(stage)
 
 
-def test_mjc_and_newton_damping_do_not_confuse_schema_fallback_with_authored_zero():
-    usda = JOINT.replace('"MjcJointAPI"', '"MjcJointAPI", "NewtonJointAPI"')
-    with wp.ScopedDevice("cpu"), ovstage.Stage("ambiguous-joint-damping") as stage:
-        _populate(stage, usda)
-        with pytest.raises(ovnewton.UnsupportedPhysicsError, match="ambiguous.*newton:armature.*mjc:armature"):
-            ovnewton.attach_ovstage(stage)
-
-
-def test_mjc_spring_state_roundtrip():
+def test_mjc_spring_state_roundtrip(warp_device):
     pytest.importorskip("mujoco")
+    pytest.importorskip("mujoco_warp")
     usda = JOINT.replace(
         "double mjc:armature", "double mjc:stiffness = 20\n    double mjc:springref = 0.3\n    double mjc:armature"
     )
     usda += '\ndef PhysicsScene "Physics" {\n    uniform token mjc:compiler:angle = "radian"\n}\n'
-    with wp.ScopedDevice("cpu"), ovstage.Stage("mjc-spring-roundtrip") as stage:
+    with wp.ScopedDevice(warp_device), ovstage.Stage("mjc-spring-roundtrip") as stage:
         _populate(stage, usda)
         builder = newton.ModelBuilder()
         newton.solvers.SolverMuJoCo.register_custom_attributes(builder)
         ovnewton.add_ovstage(builder, stage)
         model = builder.finalize()
         binding = ovnewton.attach_ovstage(stage, model=model)
-        solver = newton.solvers.SolverMuJoCo(model, use_mujoco_cpu=True)
+        solver = newton.solvers.SolverMuJoCo(model)
         state, next_state = model.state(), model.state()
         newton.eval_fk(model, model.joint_q, model.joint_qd, state)
         for _ in range(120):
@@ -213,7 +211,8 @@ def test_mjc_spring_state_roundtrip():
 
 
 @pytest.mark.parametrize("override_defaults", [False, True])
-def test_mjc_d6_defaults_and_solver_parameters(tmp_path, override_defaults):
+@pytest.mark.parametrize("newton_api", [False, True])
+def test_mjc_d6_defaults_and_solver_parameters(tmp_path, override_defaults, newton_api):
     pytest.importorskip("mujoco")
     usda = (
         JOINT.replace("PhysicsRevoluteJoint", "PhysicsJoint")
@@ -227,6 +226,8 @@ def test_mjc_d6_defaults_and_solver_parameters(tmp_path, override_defaults):
     double[] mjc:solimplimit = [0.8, 0.9, 0.002, 0.4, 3]""",
         )
     )
+    if newton_api:
+        usda = usda.replace('"MjcJointAPI"', '"MjcJointAPI", "NewtonJointAPI"')
     asset = tmp_path / "d6.usda"
     asset.write_text(usda)
     with wp.ScopedDevice("cpu"), ovstage.Stage("mjc-d6") as stage:
@@ -247,50 +248,53 @@ def test_mjc_d6_defaults_and_solver_parameters(tmp_path, override_defaults):
         np.testing.assert_array_equal(model.mujoco.solreflimit_mode.numpy(), [0, 0] if override_defaults else [2, 2])
 
 
-def test_newton_authored_values_take_precedence_over_mjc(tmp_path):
-    usda = JOINT.replace('"MjcJointAPI"', '"MjcJointAPI", "NewtonJointAPI"').replace(
-        "double mjc:armature",
-        "float newton:armature = 1\n    float newton:damping = 2\n"
-        "    float newton:friction = 3\n    double mjc:armature",
+@pytest.mark.parametrize("joint_type", ["PhysicsRevoluteJoint", "PhysicsPrismaticJoint"])
+@pytest.mark.parametrize("newton_value", [None, 0, 2])
+@pytest.mark.parametrize("mjc_values", [False, True])
+def test_newton_joint_dynamics_precedence(tmp_path, joint_type, newton_value, mjc_values):
+    usda = JOINT.replace("PhysicsRevoluteJoint", joint_type).replace(
+        '"MjcJointAPI"', '"MjcJointAPI", "NewtonJointAPI"'
     )
+    if not mjc_values:
+        usda = "\n".join(line for line in usda.splitlines() if "double mjc:" not in line)
+    if newton_value is not None:
+        authored = "\n".join(
+            f"float newton:{name} = {newton_value * scale}"
+            for scale, name in enumerate(("armature", "damping", "friction"), start=1)
+        )
+        usda = usda.replace("rel physics:body1", authored + "\n    rel physics:body1")
     asset = tmp_path / "precedence.usda"
     asset.write_text(usda)
     with wp.ScopedDevice("cpu"), ovstage.Stage("joint-parameter-precedence") as stage:
-        reference = newton.ModelBuilder()
+        reference, builder = newton.ModelBuilder(), newton.ModelBuilder()
+        for target in (reference, builder):
+            target.default_joint_cfg.armature = 0.7
+            target.default_joint_cfg.damping = 5
+            target.default_joint_cfg.friction = 0.6
         reference.add_usd(str(asset), schema_resolvers=[SchemaResolverNewton(), SchemaResolverMjc()])
         _populate(stage, usda)
-        model = ovnewton.attach_ovstage(stage).model
+        ovnewton.add_ovstage(builder, stage)
+        model = builder.finalize()
         for field in ("joint_damping", "joint_armature", "joint_friction"):
             np.testing.assert_allclose(getattr(model, field).numpy(), getattr(reference, field))
-
-
-@pytest.mark.parametrize("limit_property", [None, "limitStiffness", "limitDamping"])
-def test_ambiguous_newton_limit_defaults_are_rejected(limit_property):
-    usda = JOINT.replace('"MjcJointAPI"', '"MjcJointAPI", "NewtonJointAPI"').replace(
-        "double mjc:armature",
-        "float newton:armature = 1\n    float newton:damping = 2\n"
-        "    float newton:friction = 3\n    double mjc:armature",
-    )
-    if limit_property is not None:
-        usda = usda.replace("double mjc:armature", f"float newton:{limit_property} = -inf\n    double mjc:armature")
-    with wp.ScopedDevice("cpu"), ovstage.Stage("ambiguous-mjc-limit-defaults") as stage:
-        _populate(stage, usda)
-        builder = newton.ModelBuilder()
-        newton.solvers.SolverMuJoCo.register_custom_attributes(builder)
-        with pytest.raises(ovnewton.UnsupportedPhysicsError, match="ambiguous Newton limit defaults at /Joint"):
-            ovnewton.add_ovstage(builder, stage)
 
 
 @pytest.mark.parametrize(
     "limit_settings,custom_defaults,mode",
     [
+        ("", False, 2),
+        ("float newton:limitStiffness = -inf", False, 0),
+        ("float newton:limitDamping = -inf", False, 0),
         ("float newton:limitStiffness = 20", False, 0),
         ("double[] mjc:solreflimit = [0.04, 0.8]", False, 1),
         ("", True, 0),
     ],
 )
-def test_explicit_limit_settings_resolve_mixed_schema_defaults(tmp_path, limit_settings, custom_defaults, mode):
+def test_explicit_limit_settings_resolve_mixed_schema_defaults(
+    tmp_path, limit_settings, custom_defaults, mode, warp_device
+):
     pytest.importorskip("mujoco")
+    pytest.importorskip("mujoco_warp")
     usda = JOINT.replace('"MjcJointAPI"', '"MjcJointAPI", "NewtonJointAPI"').replace(
         "double mjc:armature",
         "float newton:armature = 1\n    float newton:damping = 2\n"
@@ -298,7 +302,7 @@ def test_explicit_limit_settings_resolve_mixed_schema_defaults(tmp_path, limit_s
     )
     asset = tmp_path / "mixed-limit-settings.usda"
     asset.write_text(usda)
-    with wp.ScopedDevice("cpu"), ovstage.Stage("explicit-mjc-limit-settings") as stage:
+    with wp.ScopedDevice(warp_device), ovstage.Stage("explicit-mjc-limit-settings") as stage:
         reference, builder = newton.ModelBuilder(), newton.ModelBuilder()
         for target in (reference, builder):
             newton.solvers.SolverMuJoCo.register_custom_attributes(target)
@@ -310,9 +314,9 @@ def test_explicit_limit_settings_resolve_mixed_schema_defaults(tmp_path, limit_s
         model, oracle = builder.finalize(), reference.finalize()
         np.testing.assert_array_equal(model.mujoco.solreflimit_mode.numpy(), [mode])
         np.testing.assert_array_equal(model.mujoco.solreflimit_mode.numpy(), oracle.mujoco.solreflimit_mode.numpy())
-        solver = newton.solvers.SolverMuJoCo(model, use_mujoco_cpu=True)
-        reference_solver = newton.solvers.SolverMuJoCo(oracle, use_mujoco_cpu=True)
-        np.testing.assert_allclose(solver.mj_model.jnt_solref, reference_solver.mj_model.jnt_solref)
+        solver = newton.solvers.SolverMuJoCo(model)
+        reference_solver = newton.solvers.SolverMuJoCo(oracle)
+        np.testing.assert_allclose(solver.mjw_model.jnt_solref.numpy(), reference_solver.mjw_model.jnt_solref.numpy())
 
 
 def test_removed_mjc_schema_does_not_enable_its_parameters(tmp_path):
@@ -339,7 +343,7 @@ over "Joint" (delete apiSchemas = ["MjcJointAPI"]) {}
 def test_mjc_reference_coordinate_units_and_limits(tmp_path, angle_unit, expected, joint_type):
     pytest.importorskip("mujoco")
     usda = JOINT.replace("PhysicsRevoluteJoint", joint_type).replace(
-        "double mjc:armature", "double mjc:ref = 15\n    double mjc:springref = 15\n    double mjc:armature"
+        "double mjc:armature", "double mjc:ref = 15\n    double mjc:springref = 45\n    double mjc:armature"
     )
     if angle_unit is not None:
         usda += f'\ndef PhysicsScene "Physics" {{\n    uniform token mjc:compiler:angle = "{angle_unit}"\n}}\n'
@@ -354,7 +358,8 @@ def test_mjc_reference_coordinate_units_and_limits(tmp_path, angle_unit, expecte
         if joint_type == "PhysicsPrismaticJoint":
             expected = 15
         np.testing.assert_allclose(model.mujoco.dof_ref.numpy(), [expected])
-        np.testing.assert_allclose(model.mujoco.dof_springref.numpy(), [expected])
+        # Newton stores the spring rest coordinate relative to mjc:ref.
+        np.testing.assert_allclose(model.joint_rest_q.numpy(), [2 * expected])
         limit = 0.7853981633974483 if joint_type == "PhysicsRevoluteJoint" else 45
         np.testing.assert_allclose(model.joint_limit_lower.numpy(), [-limit - expected])
         np.testing.assert_allclose(model.joint_limit_upper.numpy(), [limit - expected])
@@ -362,8 +367,8 @@ def test_mjc_reference_coordinate_units_and_limits(tmp_path, angle_unit, expecte
         newton.solvers.SolverMuJoCo.register_custom_attributes(reference)
         reference.add_usd(str(asset), schema_resolvers=[SchemaResolverNewton(), SchemaResolverMjc()])
         oracle = reference.finalize()
-        for field in ("dof_ref", "dof_springref"):
-            np.testing.assert_allclose(getattr(model.mujoco, field).numpy(), getattr(oracle.mujoco, field).numpy())
+        np.testing.assert_allclose(model.mujoco.dof_ref.numpy(), oracle.mujoco.dof_ref.numpy())
+        np.testing.assert_allclose(model.joint_rest_q.numpy(), oracle.joint_rest_q.numpy())
         np.testing.assert_allclose(model.joint_limit_lower.numpy(), oracle.joint_limit_lower.numpy())
 
 
@@ -418,17 +423,8 @@ def test_unused_mjc_angle_conventions_do_not_block_import(other_unit, joint_case
             np.testing.assert_allclose(model.mujoco.dof_ref.numpy(), [15])
 
 
-@pytest.mark.parametrize(
-    "property_text",
-    [
-        "double mjc:actuatorfrcrange:min = -5",
-        "double mjc:actuatorfrcrange:max = 5",
-        'token mjc:actuatorfrclimited = "true"',
-        "double[] mjc:springdamper = [0.03, 1]",
-    ],
-)
-def test_unimplemented_mjc_joint_settings_are_not_silently_dropped(property_text):
-    usda = JOINT.replace("double mjc:armature", property_text + "\n    double mjc:armature")
+def test_mjc_springdamper_is_not_silently_dropped():
+    usda = JOINT.replace("double mjc:armature", "double[] mjc:springdamper = [0.03, 1]\n    double mjc:armature")
     with wp.ScopedDevice("cpu"), ovstage.Stage("unsupported-mjc-setting") as stage:
         _populate(stage, usda)
         with pytest.raises(ovnewton.UnsupportedPhysicsError, match="unsupported mjc:"):
@@ -444,3 +440,99 @@ def test_native_d6_reference_coordinates_are_rejected(property_name):
         _populate(stage, usda)
         with pytest.raises(ovnewton.UnsupportedPhysicsError, match="no native D6 reference-coordinate semantics"):
             ovnewton.attach_ovstage(stage)
+
+
+@pytest.mark.parametrize("joint_type", ["PhysicsRevoluteJoint", "PhysicsPrismaticJoint"])
+@pytest.mark.parametrize("limits,limited,drive_limit,expected", [
+    ((-2, 5), "auto", None, 5),
+    ((-2, 5), "false", None, 1.0e6),
+    ((0, 0), "true", None, 0),
+    ((0, 0), "auto", None, 1.0e6),
+    ((-7, None), "auto", None, 7),
+    ((None, 4), "auto", None, 4),
+    ((None, None), "true", None, 1.0e6),
+    ((-2, 5), "auto", 3, 3),
+    ((-2, 5), "true", 8, 5),
+])
+def test_mjc_joint_force_limits_match_reference(tmp_path, joint_type, limits, limited, drive_limit, expected):
+    properties = f'token mjc:actuatorfrclimited = "{limited}"'
+    for name, value in zip(("min", "max"), limits):
+        if value is not None:
+            properties += f"\n    double mjc:actuatorfrcrange:{name} = {value}"
+    usda = JOINT.replace("PhysicsRevoluteJoint", joint_type).replace(
+        "double mjc:armature", properties + "\n    double mjc:armature"
+    )
+    if drive_limit is not None:
+        axis = "angular" if joint_type == "PhysicsRevoluteJoint" else "linear"
+        usda = usda.replace('"MjcJointAPI"', f'"MjcJointAPI", "PhysicsDriveAPI:{axis}"').replace(
+            "double mjc:armature", f"float drive:{axis}:physics:maxForce = {drive_limit}\n    double mjc:armature"
+        )
+    asset = tmp_path / "force-limits.usda"
+    asset.write_text(usda)
+    with wp.ScopedDevice("cpu"), ovstage.Stage("mjc-force-limits") as stage:
+        reference = newton.ModelBuilder()
+        reference.add_usd(str(asset), schema_resolvers=[SchemaResolverNewton(), SchemaResolverMjc()])
+        _populate(stage, usda)
+        model = ovnewton.attach_ovstage(stage).model
+        np.testing.assert_allclose(model.joint_effort_limit.numpy(), [expected])
+        np.testing.assert_allclose(model.joint_effort_limit.numpy(), reference.joint_effort_limit)
+
+
+@pytest.mark.parametrize("endpoint", ["min", "max"])
+def test_native_d6_force_ranges_are_rejected(tmp_path, endpoint):
+    usda = (
+        JOINT.replace("PhysicsRevoluteJoint", "PhysicsJoint")
+        .replace('"MjcJointAPI"', '"MjcJointAPI", "PhysicsLimitAPI:transX", "PhysicsLimitAPI:rotZ"')
+        .replace(
+            "float physics:lowerLimit = -45\n    float physics:upperLimit = 45",
+            """float limit:transX:physics:low = -1
+    float limit:transX:physics:high = 1
+    float limit:rotZ:physics:low = -45
+    float limit:rotZ:physics:high = 45""",
+        )
+        .replace("double mjc:armature", f"double mjc:actuatorfrcrange:{endpoint} = 5\n    double mjc:armature")
+    )
+    asset = tmp_path / "d6-force-range.usda"
+    asset.write_text(usda)
+    with wp.ScopedDevice("cpu"), ovstage.Stage("unsupported-d6-force-range") as stage:
+        reference = newton.ModelBuilder()
+        reference.add_usd(str(asset), schema_resolvers=[SchemaResolverNewton(), SchemaResolverMjc()])
+        np.testing.assert_array_equal(reference.joint_effort_limit, [np.inf, np.inf])
+        _populate(stage, usda)
+        with pytest.raises(ovnewton.UnsupportedPhysicsError, match="native D6 actuator-force ranges"):
+            ovnewton.attach_ovstage(stage)
+
+
+def test_mjc_force_limits_keep_merged_axis_order():
+    usda = JOINT.replace("double mjc:armature", "double mjc:actuatorfrcrange:max = 5\n    double mjc:armature")
+    usda += '''def PhysicsPrismaticJoint "Slider" (prepend apiSchemas = ["MjcJointAPI"]) {
+        rel physics:body1 = </Body>
+        double mjc:actuatorfrcrange:min = -7
+    }
+'''
+    with wp.ScopedDevice("cpu"), ovstage.Stage("merged-force-limits") as stage:
+        _populate(stage, usda)
+        model = ovnewton.attach_ovstage(stage).model
+        np.testing.assert_allclose(model.joint_effort_limit.numpy(), [7, 5])
+
+
+def test_mjc_force_limit_clamps_solver_drive(warp_device):
+    pytest.importorskip("mujoco")
+    pytest.importorskip("mujoco_warp")
+    usda = JOINT.replace('"MjcJointAPI"', '"MjcJointAPI", "PhysicsDriveAPI:angular"').replace(
+        "double mjc:armature",
+        """double mjc:actuatorfrcrange:min = -2
+        double mjc:actuatorfrcrange:max = 5
+        float drive:angular:physics:stiffness = 100
+        float drive:angular:physics:targetPosition = 40
+        double mjc:armature""",
+    )
+    with wp.ScopedDevice(warp_device), ovstage.Stage("force-limited-drive") as stage:
+        _populate(stage, usda)
+        binding = ovnewton.attach_ovstage(stage)
+        model = binding.model
+        solver = newton.solvers.SolverMuJoCo(model)
+        state, next_state, control = model.state(), model.state(), model.control()
+        newton.eval_fk(model, model.joint_q, model.joint_qd, state)
+        solver.step(state, next_state, control, None, 1 / 240)
+        np.testing.assert_allclose(solver.mjw_data.qfrc_actuator.numpy(), [[5]])

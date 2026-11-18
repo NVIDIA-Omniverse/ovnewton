@@ -30,6 +30,14 @@ Attachment
 Output reads
 ------------
 
+.. autoclass:: ovnewton.SimObjectType
+   :members:
+   :undoc-members:
+
+.. autoclass:: ovnewton.ObjectScope
+   :members:
+   :undoc-members:
+
 .. autoclass:: ovnewton.Query
    :members:
 
@@ -39,10 +47,34 @@ Output reads
 .. autoclass:: ovnewton.ReadGroup
    :members:
 
-.. autoclass:: ovnewton.ReadGroupMeta
+.. autoclass:: ovnewton.ReadColumn
    :members:
 
-.. autoclass:: ovnewton.ReadGroupCudaSync
+.. autoclass:: ovnewton.ReadColumnMeta
+   :members:
+
+.. autoclass:: ovnewton.ReadColumnCudaSync
+   :members:
+
+.. autofunction:: ovnewton.read_fields
+
+.. autoclass:: ovnewton.ReadField
+   :members:
+
+Attribute lookup
+----------------
+
+.. autofunction:: ovnewton.attributes.list_attributes
+
+.. autofunction:: ovnewton.attributes.get_attribute
+
+.. autoclass:: ovnewton.attributes.UnitTerm
+   :members:
+
+.. autoclass:: ovnewton.attributes.JointLayout
+   :members:
+
+.. autoclass:: ovnewton.attributes.JointLayoutPart
    :members:
 
 Errors

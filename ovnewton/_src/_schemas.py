@@ -11,6 +11,15 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from ovstage import population
 
+# Keep missing joint overrides distinct from authored zero/-inf values.
+_NEWTON_JOINT_AUTHORED_PROPERTIES = (
+    "newton:armature",
+    "newton:damping",
+    "newton:friction",
+    "newton:limitStiffness",
+    "newton:limitDamping",
+)
+
 _MJC_EQUALITY_PROPERTIES = (
     "mjc:solref",
     "mjc:solimp",
@@ -43,16 +52,43 @@ _MJC_JOINT_CUSTOM_ATTRIBUTES = {
     "mjc:ref": ("dof_ref", 1),
     "mjc:actuatorgravcomp": ("jnt_actgravcomp", 1),
 }
-_MJC_JOINT_UNSUPPORTED_PROPERTIES = (
-    "mjc:actuatorfrcrange:min",
-    "mjc:actuatorfrcrange:max",
-    "mjc:actuatorfrclimited",
-    "mjc:springdamper",
-)
+_MJC_JOINT_UNSUPPORTED_PROPERTIES = ("mjc:springdamper",)
 _MJC_JOINT_PROPERTIES = (
     *_MJC_JOINT_DYNAMICS.values(),
     *_MJC_JOINT_CUSTOM_ATTRIBUTES,
+    "mjc:actuatorfrcrange:min",
+    "mjc:actuatorfrcrange:max",
+    "mjc:actuatorfrclimited",
     *_MJC_JOINT_UNSUPPORTED_PROPERTIES,
+)
+
+
+_MJC_ACTUATOR_UNSUPPORTED_PROPERTIES = (
+    "mjc:actDim",
+    "mjc:actLimited",
+    "mjc:actRange:min",
+    "mjc:actRange:max",
+    "mjc:actEarly",
+    "mjc:lengthRange:min",
+    "mjc:lengthRange:max",
+    "mjc:dynPrm",
+)
+_MJC_ACTUATOR_PROPERTIES = (
+    "mjc:target",
+    "mjc:gainPrm",
+    "mjc:biasPrm",
+    "mjc:gainType",
+    "mjc:biasType",
+    "mjc:dynType",
+    "mjc:gear",
+    "mjc:inheritRange",
+    "mjc:ctrlLimited",
+    "mjc:ctrlRange:min",
+    "mjc:ctrlRange:max",
+    "mjc:forceLimited",
+    "mjc:forceRange:min",
+    "mjc:forceRange:max",
+    *_MJC_ACTUATOR_UNSUPPORTED_PROPERTIES,
 )
 
 
@@ -62,15 +98,26 @@ def population_desc() -> population.Desc:
     Use with ``population.open_usd_with_desc`` (or its string variant), alongside
     any rendering descriptors. This preserves unregistered schema names and
     supported MuJoCo joint and equality parameters, allowing the importer to identify
-    equalities and detect unsupported physics. It does not register plugins or
-    repopulate a stage; call :func:`ovnewton.register_usd_schemas` before the first
-    population operation.
+    equalities and detect unsupported physics. It also resolves physics materials
+    and collision-group collections while the USD stage is available. It does not
+    register plugins or repopulate a stage; call :func:`ovnewton.register_usd_schemas`
+    before the first population operation.
     """
-    from ovstage import PopulationDomain, population  # noqa: PLC0415
+    from ovstage import population  # noqa: PLC0415
+
+    from . import _deformables  # noqa: PLC0415
 
     return population.Desc(
-        domains=PopulationDomain.PHYSICS,
         selectors=(
+            *_physics_selectors(),
+            *_deformables.population_desc().selectors,
+            population.Selector(
+                prim_predicate=population.PrimPredicate.has_type("MjcActuator"),
+                property_predicate=population.PropertyPredicate.and_(
+                    population.PropertyPredicate.has_name(*_MJC_ACTUATOR_PROPERTIES),
+                    population.PropertyPredicate.is_authored(),
+                ),
+            ),
             population.Selector(
                 prim_predicate=population.PrimPredicate.has_metadata("apiSchemas"),
                 property_predicate=population.PropertyPredicate.has_name(
@@ -81,6 +128,56 @@ def population_desc() -> population.Desc:
             population.Selector(
                 prim_predicate=population.PrimPredicate.has_type("PhysicsScene"),
                 property_predicate=population.PropertyPredicate.has_name("mjc:compiler:angle"),
+            ),
+        ),
+        stage_metadata_paths=("metersPerUnit", "upAxis"),
+    )
+
+
+def _physics_selectors():
+    """Select simulation inputs and resolve physics materials and collections."""
+    import numpy as np  # noqa: PLC0415
+    from ovstage import AttributeSemantic, numpy_to_dldatatype, population  # noqa: PLC0415
+
+    prim = population.PrimPredicate
+    prop = population.PropertyPredicate
+    return (
+        population.Selector(
+            prim_predicate=prim.all(),
+            property_predicate=prop.and_(
+                prop.in_namespace("physics", "newton", "state", "drive", "limit"),
+                prop.or_(prop.not_(prop.has_name(*_NEWTON_JOINT_AUTHORED_PROPERTIES)), prop.is_authored()),
+            ),
+        ),
+        population.Selector(
+            prim_predicate=prim.is_a_type("Gprim"),
+            property_predicate=prop.has_name(
+                "extent", "size", "radius", "height", "axis",
+                "points", "faceVertexCounts", "faceVertexIndices", "orientation"
+            ),
+        ),
+        population.Selector(
+            prim_predicate=prim.has_type("PointInstancer"),
+            property_predicate=prop.has_name("prototypes"),
+        ),
+        population.Selector(
+            prim_predicate=prim.has_type("PhysicsCollisionGroup"),
+            derived_properties=(
+                population.DerivedProperty(
+                    "collection:colliders:members", population.Expression.resolved_collection_members("colliders"),
+                    dtype=numpy_to_dldatatype(np.dtype(np.uint64)),
+                    is_array=True, semantic=AttributeSemantic.RELATIONSHIP_PATH_ID,
+                ),
+            ),
+        ),
+        population.Selector(
+            prim_predicate=prim.has_schema("PhysicsCollisionAPI"),
+            derived_properties=(
+                population.DerivedProperty(
+                    "material:binding:physics", population.Expression.resolved_bound_material("physics"),
+                    dtype=numpy_to_dldatatype(np.dtype(np.uint64)),
+                    is_array=True, semantic=AttributeSemantic.RELATIONSHIP_PATH_ID,
+                ),
             ),
         ),
     )

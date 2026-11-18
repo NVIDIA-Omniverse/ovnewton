@@ -9,10 +9,21 @@ from contextlib import contextmanager
 from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
+import ovstage
 from ovstage import ErrorCode, OrdinalRange, OvstageError
 
 from ._errors import OvstageContractError
 from ._schema_names import USD_PATH
+
+
+def _token_to_string(pd: Any, value: Any) -> str:
+    """Decode a raw numeric token ID from column data, not a typed Token handle."""
+    return pd.token_to_string(ovstage.Token(int(value)))
+
+
+def _path_to_string(pd: Any, value: Any) -> str:
+    """Decode a raw numeric path ID from column data, not a typed PrimPath handle."""
+    return pd.path_to_string(ovstage.PrimPath(int(value)))
 
 
 def _count(stage: Any, query: Any) -> int:
@@ -67,33 +78,33 @@ def _resolve_read_ceiling(stage: Any, ordinal: Optional[int]) -> int:
     return resolved
 
 
-def _consume_column_group(rows: Dict[int, np.ndarray], group: Any, attr: str, *, ragged: bool) -> None:
-    if group.is_delete:
+def _consume_column_group(rows: Dict[int, np.ndarray], group: Any, column: Any, attr: str, *, ragged: bool) -> None:
+    if column.is_delete:
         return
-    if ragged and group.tensor_count:
+    if ragged and column.tensor_count:
         for local in range(group.prim_count):
-            tensor_index = group.data_row_index(local)
-            if tensor_index < 0 or tensor_index >= group.tensor_count:
+            tensor_index = column.data_row_index(local)
+            if tensor_index < 0 or tensor_index >= column.tensor_count:
                 raise OvstageContractError(
-                    f"attribute {attr!r} returned ragged row {tensor_index} outside [0, {group.tensor_count})"
+                    f"attribute {attr!r} returned ragged row {tensor_index} outside [0, {column.tensor_count})"
                 )
-            rows[group.prim_index(local)] = np.array(group.array(tensor_index), copy=True).reshape(-1)
+            rows[group.prim_index(local)] = np.array(column.array(tensor_index), copy=True).reshape(-1)
         return
-    if not ragged and group.tensor_count not in (0, 1):
+    if not ragged and column.tensor_count not in (0, 1):
         raise OvstageContractError(
-            f"fixed attribute {attr!r} returned {group.tensor_count} tensors; expected at most one"
+            f"fixed attribute {attr!r} returned {column.tensor_count} tensors; expected at most one"
         )
-    if ragged or group.tensor_count == 0:
+    if ragged or column.tensor_count == 0:
         return
 
-    arr = np.asarray(group.array(0))
+    arr = np.asarray(column.array(0))
     if arr.ndim == 0:
         raise OvstageContractError(f"fixed attribute {attr!r} must have a row axis")
     nrows = arr.shape[0]
-    if nrows <= 0 or (not group.has_data_index_map and nrows != group.prim_count):
+    if nrows <= 0 or (not column.has_data_index_map and nrows != group.prim_count):
         raise OvstageContractError(f"fixed attribute {attr!r} has {nrows} rows for {group.prim_count} prims")
     for local in range(group.prim_count):
-        row = group.data_row_index(local)
+        row = column.data_row_index(local)
         if row < 0 or row >= nrows:
             raise OvstageContractError(f"fixed attribute {attr!r} returned row {row} outside [0, {nrows})")
         # The importer consumes flat rows, including for vector and matrix attributes.
@@ -130,17 +141,18 @@ def read_columns(
         raise OvstageContractError("column names resolved to duplicate ovstage tokens")
     with stage.read_attributes(query, list(token_to_attr), OrdinalRange.latest(ordinal)) as read:
         _wait_for_read(read, ordinal)
-        group = read.fetch_next()
-        while group is not None:
-            try:
-                attr = token_to_attr.get(group.attribute)
-                if attr is None:
-                    raise OvstageContractError(f"column read returned unexpected attribute token {group.attribute}")
-                _validate_payload_ordinal(group, ordinal, f"attribute {attr!r}")
-                _consume_column_group(rows[attr], group, attr, ragged=attr in ragged_attrs and group.is_array)
-            finally:
-                stage.release_group(group)
-            group = read.fetch_next()
+        for group in read.groups():
+            with group:
+                for column in group.columns:
+                    attr = token_to_attr.get(column.attribute)
+                    if attr is None:
+                        raise OvstageContractError(
+                            f"column read returned unexpected attribute token {column.attribute}"
+                        )
+                    _validate_payload_ordinal(column, ordinal, f"attribute {attr!r}")
+                    _consume_column_group(
+                        rows[attr], group, column, attr, ragged=attr in ragged_attrs and column.is_array
+                    )
     return rows
 
 
@@ -165,33 +177,30 @@ def _read_path_columns(
     columns: Dict[str, Dict[str, str]] = {attr: {} for attr in attrs}
     with stage.read_attributes(query, list(token_to_attr), OrdinalRange.latest(ordinal)) as read:
         _wait_for_read(read, ordinal)
-        group = read.fetch_next()
-        while group is not None:
-            try:
-                attr = token_to_attr.get(group.attribute)
-                if attr is None:
-                    raise OvstageContractError(f"path read returned unexpected attribute token {group.attribute}")
-                _validate_payload_ordinal(group, ordinal, f"attribute {attr!r}")
-                rows: Dict[int, np.ndarray] = {}
-                _consume_column_group(rows, group, attr, ragged=False)
-                group_paths = pd.get_path_strings(group.prim_list) if rows else []
-                for prim_index, row in rows.items():
-                    if prim_index < 0 or prim_index >= len(group_paths):
-                        raise OvstageContractError(
-                            f"attribute {attr!r} returned prim row {prim_index} outside its path list"
-                        )
-                    if len(row) != 1:
-                        raise OvstageContractError(f"path attribute {attr!r} returned a row with {len(row)} values")
-                    path = group_paths[prim_index]
-                    value = pd.path_to_string(int(row[0]))
-                    if attr == USD_PATH and path != value:
-                        raise OvstageContractError(f"{USD_PATH!r} identifies {path} as {value}")
-                    previous = columns[attr].setdefault(path, value)
-                    if previous != value:
-                        raise OvstageContractError(f"attribute {attr!r} returned conflicting rows for {path}")
-            finally:
-                stage.release_group(group)
-            group = read.fetch_next()
+        for group in read.groups():
+            with group:
+                for column in group.columns:
+                    attr = token_to_attr.get(column.attribute)
+                    if attr is None:
+                        raise OvstageContractError(f"path read returned unexpected attribute token {column.attribute}")
+                    _validate_payload_ordinal(column, ordinal, f"attribute {attr!r}")
+                    rows: Dict[int, np.ndarray] = {}
+                    _consume_column_group(rows, group, column, attr, ragged=False)
+                    group_paths = pd.get_path_strings(group.prim_list) if rows else []
+                    for prim_index, row in rows.items():
+                        if prim_index < 0 or prim_index >= len(group_paths):
+                            raise OvstageContractError(
+                                f"attribute {attr!r} returned prim row {prim_index} outside its path list"
+                            )
+                        if len(row) != 1:
+                            raise OvstageContractError(f"path attribute {attr!r} returned a row with {len(row)} values")
+                        path = group_paths[prim_index]
+                        value = _path_to_string(pd, row[0])
+                        if attr == USD_PATH and path != value:
+                            raise OvstageContractError(f"{USD_PATH!r} identifies {path} as {value}")
+                        previous = columns[attr].setdefault(path, value)
+                        if previous != value:
+                            raise OvstageContractError(f"attribute {attr!r} returned conflicting rows for {path}")
     return columns
 
 
@@ -215,9 +224,6 @@ def _query_paths(
 @contextmanager
 def _path_list_query(stage: Any, pd: Any, paths: Sequence[str]):
     """Yield a query whose row indices match ``paths`` and release its handles."""
-    path_list = pd.create_path_list_from_strings(paths)
-    try:
+    with pd.create_path_list_from_strings(paths) as path_list:
         with stage.query_from_path_list(path_list) as query:
             yield query
-    finally:
-        pd.destroy_path_list(path_list)

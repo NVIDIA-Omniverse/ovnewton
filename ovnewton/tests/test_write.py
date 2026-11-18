@@ -15,7 +15,8 @@ import ctypes
 import numpy as np
 import ovstage
 import pytest
-from ovstage import PopulationDomain, population
+import warp as wp
+from ovstage import population
 
 import ovnewton
 from ovnewton._src import _build, _runtime, _stage
@@ -27,7 +28,7 @@ from .runtime_helpers import read_body_state
 CARTPOLE = get_asset("scene_cartpole.usda")
 
 
-def test_scaled_body_pose_write_roundtrip(tmp_path):
+def test_scaled_body_pose_write_roundtrip(tmp_path, warp_device):
     asset = tmp_path / "scaled-body.usda"
     asset.write_text(
         """#usda 1.0
@@ -40,8 +41,15 @@ def Xform "Body" (prepend apiSchemas = ["PhysicsRigidBodyAPI"]) {
         encoding="utf-8",
     )
 
-    with ovstage.Stage("ovstage-scaled-body") as stage, ovstage.PathDictionary(stage) as pd:
-        population.open_usd(stage, str(asset), ordinal=1, domains=PopulationDomain.ALL)
+    with (
+        wp.ScopedDevice(warp_device),
+        ovstage.Stage("ovstage-scaled-body") as stage,
+        ovstage.PathDictionary(stage) as pd,
+    ):
+        population.open_usd_with_desc(
+            stage, str(asset), ordinal=1, time=population.DEFAULT_TIME,
+            descs=(ovnewton.population_desc(),),
+        )
         stage.advance_write_floor(ordinal=1).wait()
         binding = ovnewton.attach_ovstage(stage)
         binding.update_to_ovstage(binding.model.state(), ordinal=2)
@@ -156,7 +164,10 @@ def test_cartpole_pose_write_roundtrip():
     import warp as wp
 
     with ovstage.Stage("ovstage-write") as stage, ovstage.PathDictionary(stage) as pd:
-        population.open_usd(stage, CARTPOLE, ordinal=1, domains=PopulationDomain.ALL)
+        population.open_usd_with_desc(
+            stage, CARTPOLE, ordinal=1, time=population.DEFAULT_TIME,
+            descs=(ovnewton.population_desc(),),
+        )
         stage.advance_write_floor(ordinal=1).wait()
         model = _build.build_model(stage, pd, ordinal=1)
         body_paths = model.body_label
@@ -210,7 +221,10 @@ def test_cartpole_velocity_write_roundtrip():
     import warp as wp
 
     with ovstage.Stage("ovstage-vel") as stage, ovstage.PathDictionary(stage) as pd:
-        population.open_usd(stage, CARTPOLE, ordinal=1, domains=PopulationDomain.ALL)
+        population.open_usd_with_desc(
+            stage, CARTPOLE, ordinal=1, time=population.DEFAULT_TIME,
+            descs=(ovnewton.population_desc(),),
+        )
         stage.advance_write_floor(ordinal=1).wait()
         model = _build.build_model(stage, pd, ordinal=1)
         body_paths = model.body_label
@@ -252,7 +266,10 @@ def test_cartpole_state_sync_roundtrip():
     import warp as wp
 
     with ovstage.Stage("ovstage-sync") as stage, ovstage.PathDictionary(stage) as pd:
-        population.open_usd(stage, CARTPOLE, ordinal=1, domains=PopulationDomain.ALL)
+        population.open_usd_with_desc(
+            stage, CARTPOLE, ordinal=1, time=population.DEFAULT_TIME,
+            descs=(ovnewton.population_desc(),),
+        )
         stage.advance_write_floor(ordinal=1).wait()
         model = _build.build_model(stage, pd, ordinal=1)
         body_paths = model.body_label
@@ -294,7 +311,10 @@ def test_cartpole_joint_state_write_roundtrip():
 
     deg = 57.29577951308232
     with ovstage.Stage("ovstage-jstate") as stage, ovstage.PathDictionary(stage) as pd:
-        population.open_usd(stage, CARTPOLE, ordinal=1, domains=PopulationDomain.ALL)
+        population.open_usd_with_desc(
+            stage, CARTPOLE, ordinal=1, time=population.DEFAULT_TIME,
+            descs=(ovnewton.population_desc(),),
+        )
         stage.advance_write_floor(ordinal=1).wait()
         binding = ovnewton.attach_ovstage(stage)
         model = binding.model
