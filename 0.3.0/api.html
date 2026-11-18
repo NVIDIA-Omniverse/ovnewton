@@ -1,0 +1,1840 @@
+
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="./" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>API reference &#8212; ovnewton</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="_static/styles/theme.css?digest=90905a2f556bf617f1a9" rel="stylesheet" />
+<link href="_static/styles/pydata-sphinx-theme.css?digest=90905a2f556bf617f1a9" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="_static/styles/nvidia-sphinx-theme.css?v=933278ad" />
+    <link rel="stylesheet" type="text/css" href="_static/copybutton.css?v=76b2166b" />
+  
+  <!-- So that users can add custom icons -->
+  <script defer src="_static/scripts/fontawesome.js?digest=90905a2f556bf617f1a9"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="_static/scripts/bootstrap.js?digest=90905a2f556bf617f1a9" />
+<link rel="preload" as="script" href="_static/scripts/pydata-sphinx-theme.js?digest=90905a2f556bf617f1a9" />
+
+
+
+    <script src="_static/documentation_options.js?v=e259d695"></script>
+    <script src="_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="_static/copybutton.js?v=f281be69"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'api';</script>
+    <script>
+        DOCUMENTATION_OPTIONS.theme_version = '0.20.0';
+        DOCUMENTATION_OPTIONS.theme_switcher_json_url = '../versions.json';
+        DOCUMENTATION_OPTIONS.theme_switcher_version_match = '0.3.0';
+        DOCUMENTATION_OPTIONS.show_version_warning_banner =
+            false;
+        </script>
+    <script>DOCUMENTATION_OPTIONS.search_as_you_type = false;</script>
+
+    <link rel="icon" href="_static/favicon.png"/>
+
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="prev" title="Support" href="support.html" />
+
+
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="0.3.0" />
+  
+    
+    <script src="_static/searchtools.js"></script>
+    <script src="_static/language_data.js"></script>
+    <script src="searchindex.js"></script>
+  
+
+
+  </head>
+
+  <body data-default-mode="">
+
+
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+  
+  
+  
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header id="pst-header" class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="ovnewton - Home"/>
+    <img src="_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="ovnewton - Home"/>
+  
+  
+    <p class="title logo__title">ovnewton</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+
+
+<div class="version-switcher__container dropdown pst-js-only">
+  <button id="pst-version-switcher-button-2"
+    type="button"
+    class="version-switcher__button btn btn-sm dropdown-toggle"
+    data-bs-toggle="dropdown"
+    aria-haspopup="listbox"
+    aria-controls="pst-version-switcher-list-2"
+    aria-label="Version switcher list"
+  >
+    Choose version  <!-- this text may get changed later by javascript -->
+    <span class="caret"></span>
+  </button>
+  <div id="pst-version-switcher-list-2"
+    class="version-switcher__menu dropdown-menu list-group-flush py-0"
+    role="listbox" aria-labelledby="pst-version-switcher-button-2">
+    <!-- dropdown will be populated by javascript on page load -->
+  </div>
+</div></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+      
+        <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/NVIDIA-Omniverse/ovnewton" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://pypi.org/project/ovnewton/" title="PyPI" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-python fa-lg" aria-hidden="true"></i><span class="visually-hidden">PyPI</span></a>
+        </li>
+</ul></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+    <button class="pst-navbar-icon sidebar-toggle secondary-toggle" aria-label="On this page">
+      <span class="fa-solid fa-outdent"></span>
+    </button>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="index.html">
+  
+  
+  
+  
+  
+    
+    
+      
+    
+    
+    <img src="_static/nvidia-logo-horiz-rgb-blk-for-screen.svg" class="logo__image only-light" alt="ovnewton - Home"/>
+    <img src="_static/nvidia-logo-horiz-rgb-wht-for-screen.svg" class="logo__image only-dark pst-js-only" alt="ovnewton - Home"/>
+  
+  
+    <p class="title logo__title">ovnewton</p>
+  
+</a>
+
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+
+
+<div class="version-switcher__container dropdown pst-js-only">
+  <button id="pst-version-switcher-button-3"
+    type="button"
+    class="version-switcher__button btn btn-sm dropdown-toggle"
+    data-bs-toggle="dropdown"
+    aria-haspopup="listbox"
+    aria-controls="pst-version-switcher-list-3"
+    aria-label="Version switcher list"
+  >
+    Choose version  <!-- this text may get changed later by javascript -->
+    <span class="caret"></span>
+  </button>
+  <div id="pst-version-switcher-list-3"
+    class="version-switcher__menu dropdown-menu list-group-flush py-0"
+    role="listbox" aria-labelledby="pst-version-switcher-button-3">
+    <!-- dropdown will be populated by javascript on page load -->
+  </div>
+</div></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<div class="theme-switch-container dropdown pst-js-only" data-bs-toggle="tooltip" data-bs-placement="bottom" title="Color mode">
+  <button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button dropdown-toggle" aria-label="Color mode" data-bs-toggle="dropdown">
+    <i class="theme-switch fa-solid fa-sun fa-lg fa-fw" data-mode="light" title="Light"></i>
+    <i class="theme-switch fa-solid fa-moon fa-lg fa-fw" data-mode="dark" title="Dark"></i>
+    <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg fa-fw" data-mode="auto" title="System Settings"></i>
+  </button>
+  <ul class="dropdown-menu dropdown-menu-end">
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="auto"><i class="fa-solid fa-circle-half-stroke fa-lg fa-fw me-1"></i>System Settings</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="light"><i class="fa-solid fa-sun fa-lg fa-fw me-1"></i>Light</button></li>
+    <li><button class="dropdown-item d-flex align-items-center theme-change-button" data-mode="dark"><i class="fa-solid fa-moon fa-lg fa-fw me-1"></i>Dark</button></li>
+  </ul>
+</div></div>
+        
+          <div class="navbar-item"><ul class="navbar-icon-links"
+    aria-label="Icon Links">
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://github.com/NVIDIA-Omniverse/ovnewton" title="GitHub" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-square-github fa-lg" aria-hidden="true"></i><span class="visually-hidden">GitHub</span></a>
+        </li>
+        <li class="nav-item">
+          
+          
+          
+          
+          
+          
+          
+          
+          <a href="https://pypi.org/project/ovnewton/" title="PyPI" class="nav-link pst-navbar-icon" rel="noopener" target="_blank" data-bs-toggle="tooltip" data-bs-placement="bottom"><i class="fa-brands fa-python fa-lg" aria-hidden="true"></i><span class="visually-hidden">PyPI</span></a>
+        </li>
+</ul></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+
+
+
+<nav class="bd-docs-nav bd-links"
+     aria-label="Table of Contents">
+  <p class="bd-links__title" role="heading" aria-level="1">Table of Contents</p>
+  <div class="bd-toc-item navbar-nav"><ul class="nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="index.html">Home</a></li>
+</ul>
+<ul class="current nav bd-sidenav">
+<li class="toctree-l1"><a class="reference internal" href="getting-started.html">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="concepts.html">Concepts</a></li>
+<li class="toctree-l1"><a class="reference internal" href="output-reads.html">Read simulation output</a></li>
+<li class="toctree-l1"><a class="reference internal" href="read-fields.html">Read field reference</a></li>
+<li class="toctree-l1"><a class="reference internal" href="runtime-inputs.html">Update simulation inputs</a></li>
+<li class="toctree-l1"><a class="reference internal" href="deformables.html">Deformables</a></li>
+<li class="toctree-l1"><a class="reference internal" href="support.html">Support</a></li>
+<li class="toctree-l1 current active"><a class="current reference internal" href="#">API reference</a></li>
+</ul>
+</div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+  </div>
+
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="index.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">API reference</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section id="api-reference">
+<h1>API reference<a class="headerlink" href="#api-reference" title="Link to this heading">#</a></h1>
+<section id="package">
+<h2>Package<a class="headerlink" href="#package" title="Link to this heading">#</a></h2>
+<dl class="py data">
+<dt class="sig sig-object py" id="ovnewton.__version__">
+<span class="sig-prename descclassname"><span class="pre">ovnewton.</span></span><span class="sig-name descname"><span class="pre">__version__</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span></span><span class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">'0.3.0'</span></span><a class="headerlink" href="#ovnewton.__version__" title="Link to this definition">#</a></dt>
+<dd><p>str(object=’’) -&gt; str
+str(bytes_or_buffer[, encoding[, errors]]) -&gt; str</p>
+<p>Create a new string object from the given object. If encoding or
+errors is specified, then the object must expose a data buffer
+that will be decoded using the given encoding and error handler.
+Otherwise, returns the result of object.__str__() (if defined)
+or repr(object).
+encoding defaults to sys.getdefaultencoding().
+errors defaults to ‘strict’.</p>
+</dd></dl>
+
+</section>
+<section id="attachment">
+<h2>Attachment<a class="headerlink" href="#attachment" title="Link to this heading">#</a></h2>
+<dl class="py function">
+<dt class="sig sig-object py" id="ovnewton.register_usd_schemas">
+<span class="sig-prename descclassname"><span class="pre">ovnewton.</span></span><span class="sig-name descname"><span class="pre">register_usd_schemas</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#ovnewton.register_usd_schemas" title="Link to this definition">#</a></dt>
+<dd><p>Register ovnewton’s USD schemas before the first USD schema read.</p>
+<p>Registration is process-wide, irreversible, and safe to repeat. It must run
+before any USD schema definitions are read in the process, including by an
+ovstage population or export call.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="ovnewton.population_desc">
+<span class="sig-prename descclassname"><span class="pre">ovnewton.</span></span><span class="sig-name descname"><span class="pre">population_desc</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#ovnewton.population_desc" title="Link to this definition">#</a></dt>
+<dd><p>Select physics data and composed API-schema names for ovnewton imports.</p>
+<p>Use with <code class="docutils literal notranslate"><span class="pre">population.open_usd_with_desc</span></code> (or its string variant), alongside
+any rendering descriptors. This preserves unregistered schema names and
+supported MuJoCo joint and equality parameters, allowing the importer to identify
+equalities and detect unsupported physics. It also resolves physics materials
+and collision-group collections while the USD stage is available. It does not
+register plugins or repopulate a stage; call <a class="reference internal" href="#ovnewton.register_usd_schemas" title="ovnewton.register_usd_schemas"><code class="xref py py-func docutils literal notranslate"><span class="pre">ovnewton.register_usd_schemas()</span></code></a>
+before the first population operation.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>population.Desc</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="ovnewton.add_ovstage">
+<span class="sig-prename descclassname"><span class="pre">ovnewton.</span></span><span class="sig-name descname"><span class="pre">add_ovstage</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">builder</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ovstage_stage</span></span></em>, <em class="sig-param"><span class="keyword-only-separator o"><abbr title="Keyword-only parameters separator (PEP 3102)"><span class="pre">*</span></abbr></span></em>, <em class="sig-param"><span class="n"><span class="pre">ordinal</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ovnewton.add_ovstage" title="Link to this definition">#</a></dt>
+<dd><p>Add one populated ovstage’s model data to a caller-owned Newton builder.</p>
+<p>The current implementation supports one ovstage per builder. <code class="docutils literal notranslate"><span class="pre">builder</span></code>
+must not contain model entities, but its defaults and custom attribute
+definitions may be configured. This function applies the stage’s up axis
+and gravity, adds the stage-backed entities, and returns without finalizing
+the builder or creating a <a class="reference internal" href="#ovnewton.StageBinding" title="ovnewton.StageBinding"><code class="xref py py-class docutils literal notranslate"><span class="pre">StageBinding</span></code></a>. Callers may perform
+solver-specific preparation afterwards.</p>
+<p>Populate USD inputs with <a class="reference internal" href="#ovnewton.population_desc" title="ovnewton.population_desc"><code class="xref py py-func docutils literal notranslate"><span class="pre">ovnewton.population_desc()</span></code></a> (or an equivalent
+descriptor) so unsupported authored API names survive schema population.
+This function cannot detect names discarded before import.</p>
+<p>Supported surface cloth retains its publication mappings through Newton’s
+custom model attributes. For VBD cloth, call
+<code class="docutils literal notranslate"><span class="pre">builder.color(include_bending=True)</span></code> before finalization, then bind the
+finalized model with <code class="docutils literal notranslate"><span class="pre">attach_ovstage(stage,</span> <span class="pre">model=model)</span></code>.</p>
+<p><code class="docutils literal notranslate"><span class="pre">ordinal</span></code> bounds the populated payloads read from the stage. The returned
+metadata reports whether preserving rootless joints requires skipping
+Newton’s articulation-membership validation during finalization.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>builder</strong> (<em>newton.ModelBuilder</em>)</p></li>
+<li><p><strong>ovstage_stage</strong> (<em>ovstage.Stage</em>)</p></li>
+<li><p><strong>ordinal</strong> (<em>int</em>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference internal" href="#ovnewton.OvstageImportResult" title="ovnewton.OvstageImportResult">OvstageImportResult</a></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="ovnewton.OvstageImportResult">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">ovnewton.</span></span><span class="sig-name descname"><span class="pre">OvstageImportResult</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">has_orphan_joints</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">False</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ovnewton.OvstageImportResult" title="Link to this definition">#</a></dt>
+<dd><p>Information needed to finalize a builder populated from ovstage.</p>
+<p><code class="docutils literal notranslate"><span class="pre">has_orphan_joints</span></code> is true when the USD intentionally leaves joints
+outside an articulation. Preserve that topology with
+<code class="docutils literal notranslate"><span class="pre">builder.finalize(skip_validation_joints=result.has_orphan_joints)</span></code>.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>has_orphan_joints</strong> (<em>bool</em>)</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="ovnewton.attach_ovstage">
+<span class="sig-prename descclassname"><span class="pre">ovnewton.</span></span><span class="sig-name descname"><span class="pre">attach_ovstage</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ovstage_stage</span></span></em>, <em class="sig-param"><span class="keyword-only-separator o"><abbr title="Keyword-only parameters separator (PEP 3102)"><span class="pre">*</span></abbr></span></em>, <em class="sig-param"><span class="n"><span class="pre">model</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">ordinal</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ovnewton.attach_ovstage" title="Link to this definition">#</a></dt>
+<dd><p>Create a <a class="reference internal" href="#ovnewton.StageBinding" title="ovnewton.StageBinding"><code class="xref py py-class docutils literal notranslate"><span class="pre">StageBinding</span></code></a> for an ovstage and a Newton model.</p>
+<p>When <code class="docutils literal notranslate"><span class="pre">model</span></code> is supplied, this function binds it without importing or
+finalizing anything. Its <code class="docutils literal notranslate"><span class="pre">body_label</span></code> and <code class="docutils literal notranslate"><span class="pre">joint_label</span></code> values must
+match prim paths in the ovstage.</p>
+<p>When <code class="docutils literal notranslate"><span class="pre">model</span></code> is <code class="docutils literal notranslate"><span class="pre">None</span></code>, this function creates a
+<code class="xref py py-class docutils literal notranslate"><span class="pre">newton.ModelBuilder</span></code>, adds the ovstage contents, finalizes the
+model, and binds it. Call <a class="reference internal" href="#ovnewton.add_ovstage" title="ovnewton.add_ovstage"><code class="xref py py-func docutils literal notranslate"><span class="pre">add_ovstage()</span></code></a> directly when the application
+needs to configure the builder before finalization.</p>
+<p>For imports, populate USD inputs with <a class="reference internal" href="#ovnewton.population_desc" title="ovnewton.population_desc"><code class="xref py py-func docutils literal notranslate"><span class="pre">ovnewton.population_desc()</span></code></a> or
+an equivalent descriptor to preserve unsupported authored API names.</p>
+<p><code class="docutils literal notranslate"><span class="pre">ordinal</span></code> bounds the populated payloads used to build or validate the
+binding and defaults to the conventional initial population ordinal, 1.
+Ovstage does not retain historical payloads.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>ovstage_stage</strong> (<em>ovstage.Stage</em>)</p></li>
+<li><p><strong>model</strong> (<em>newton.Model</em><em> | </em><em>None</em>)</p></li>
+<li><p><strong>ordinal</strong> (<em>int</em>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference internal" href="#ovnewton.StageBinding" title="ovnewton.StageBinding">StageBinding</a></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="ovnewton.StageBinding">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">ovnewton.</span></span><span class="sig-name descname"><span class="pre">StageBinding</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">stage</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">model</span></span></em>, <em class="sig-param"><span class="keyword-only-separator o"><abbr title="Keyword-only parameters separator (PEP 3102)"><span class="pre">*</span></abbr></span></em>, <em class="sig-param"><span class="n"><span class="pre">ordinal</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">1</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ovnewton.StageBinding" title="Link to this definition">#</a></dt>
+<dd><p>Connect a Newton model to an ovstage through the model’s body and joint labels.</p>
+<p>Writes simulation state to ovstage, reads stage changes into Newton, and lets
+applications read selected Newton state or model arrays. Writes run one at a
+time because they reuse buffers. A read may borrow arrays from its supplied
+state or from the bound model; do not change those arrays until every reader
+has finished. Recreate the binding after changing the model or stage
+structure.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>stage</strong> (<em>ovstage.Stage</em>)</p></li>
+<li><p><strong>model</strong> (<em>newton.Model</em>)</p></li>
+<li><p><strong>ordinal</strong> (<em>int</em>)</p></li>
+</ul>
+</dd>
+</dl>
+<dl class="py property">
+<dt class="sig sig-object py" id="ovnewton.StageBinding.model">
+<span class="property"><span class="k"><span class="pre">property</span></span><span class="w"> </span></span><span class="sig-name descname"><span class="pre">model</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">newton.Model</span></span><a class="headerlink" href="#ovnewton.StageBinding.model" title="Link to this definition">#</a></dt>
+<dd><p>The connected <code class="xref py py-class docutils literal notranslate"><span class="pre">newton.Model</span></code>.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ovnewton.StageBinding.query">
+<span class="sig-name descname"><span class="pre">query</span></span><span class="sig-paren">(</span>
+
+<dl>
+<dd><em class="sig-param"><span class="n"><span class="pre">stage_query</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="keyword-only-separator o"><abbr title="Keyword-only parameters separator (PEP 3102)"><span class="pre">*</span></abbr></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">paths</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">object_type</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">scope</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">ObjectScope.ALL</span></span></em>,</dd>
+</dl>
+
+<span class="sig-paren">)</span><a class="headerlink" href="#ovnewton.StageBinding.query" title="Link to this definition">#</a></dt>
+<dd><p>Prepare a reusable output selection from a stage query or paths.</p>
+<p>Pass either <code class="docutils literal notranslate"><span class="pre">stage_query</span></code> or <code class="docutils literal notranslate"><span class="pre">paths</span></code>, but not both. When
+<code class="docutils literal notranslate"><span class="pre">object_type</span></code> is provided, both may be omitted to select every object
+of that type. Paths must be unique absolute paths. Bound bodies,
+articulation roots, the effective physics scene, and authored joints
+use stage prim paths; generated Newton joints may use model-only labels.
+Read results keep body order and preserve joint order within each
+returned group. Each column has one width; columns with the same ordered
+prim rows share a group. A stage query may also match unrelated prims;
+those prims are ignored. <code class="docutils literal notranslate"><span class="pre">ObjectScope.ALL</span></code> is supported. Active and
+changed-since membership are not yet supported. The returned selection
+remains valid after the stage query is closed.</p>
+<p><code class="docutils literal notranslate"><span class="pre">Query.attributes</span></code> lists candidate field-name tokens for this
+topology, not sample-time availability. Optional state/control buffers
+are validated by <a class="reference internal" href="#ovnewton.StageBinding.read" title="ovnewton.StageBinding.read"><code class="xref py py-meth docutils literal notranslate"><span class="pre">read()</span></code></a>. Keep this selection with its originating
+binding. Structural changes require a new binding and new selections;
+no automatic topology-invalidation token is provided.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>stage_query</strong> (<em>ovstage.Query</em><em> | </em><em>None</em>)</p></li>
+<li><p><strong>paths</strong> (<em>Optional</em><em>[</em><em>Sequence</em><em>[</em><em>str</em><em>]</em><em>]</em>)</p></li>
+<li><p><strong>object_type</strong> (<a class="reference internal" href="#ovnewton.SimObjectType" title="ovnewton.SimObjectType"><em>SimObjectType</em></a><em> | </em><em>None</em>)</p></li>
+<li><p><strong>scope</strong> (<a class="reference internal" href="#ovnewton.ObjectScope" title="ovnewton.ObjectScope"><em>ObjectScope</em></a>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference internal" href="#ovnewton.Query" title="ovnewton.Query">Query</a></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ovnewton.StageBinding.read">
+<span class="sig-name descname"><span class="pre">read</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">state</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="keyword-only-separator o"><abbr title="Keyword-only parameters separator (PEP 3102)"><span class="pre">*</span></abbr></span></em>, <em class="sig-param"><span class="n"><span class="pre">control</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">query</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">attributes</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ovnewton.StageBinding.read" title="Link to this definition">#</a></dt>
+<dd><p>Expose selected Newton output as prim groups with attribute columns.</p>
+<p><code class="docutils literal notranslate"><span class="pre">state</span></code> must provide any requested state arrays. Their sizes must
+match the connected model, and they must use the same device. It may be
+omitted when only model or control attributes are requested. <code class="docutils literal notranslate"><span class="pre">control</span></code>
+supplies current joint targets and commanded effort, and is required
+when either is requested for selected joints.
+If <code class="docutils literal notranslate"><span class="pre">query</span></code> is omitted, the read includes every available output object.
+<code class="docutils literal notranslate"><span class="pre">attributes</span></code> accepts the fields listed in <a class="reference internal" href="read-fields.html"><span class="doc">Read field reference</span></a>, which
+<a class="reference internal" href="#ovnewton.read_fields" title="ovnewton.read_fields"><code class="xref py py-func docutils literal notranslate"><span class="pre">ovnewton.read_fields()</span></code></a> also returns as <a class="reference internal" href="#ovnewton.ReadField" title="ovnewton.ReadField"><code class="xref py py-class docutils literal notranslate"><span class="pre">ReadField</span></code></a>
+declarations: body pose, velocity, optional acceleration,
+mass-property, shape-material, articulation-root and scene fields,
+Newton joint fields such as <code class="docutils literal notranslate"><span class="pre">joint_q</span></code>, <code class="docutils literal notranslate"><span class="pre">joint_qd</span></code> and
+<code class="docutils literal notranslate"><span class="pre">joint_f</span></code>, and standard per-axis joint fields such as
+<code class="docutils literal notranslate"><span class="pre">jointPosition</span></code>.
+<code class="docutils literal notranslate"><span class="pre">joint_f</span></code> reads commanded generalized forces from <code class="docutils literal notranslate"><span class="pre">Control</span></code> in
+velocity-DOF order, not measured solver forces. Names or interned
+token IDs are accepted; duplicate requests are collapsed.
+An unknown field is an error; a known field with no compatible selected
+objects returns no column. An empty attribute list returns an empty
+result. Discovery does not validate optional state buffers; requesting
+unavailable acceleration, for example, raises <code class="docutils literal notranslate"><span class="pre">ValueError</span></code>. No solver
+work or state reconstruction is performed.</p>
+<p>Newton fields have snake_case names, which are Newton array names.
+They keep Newton’s units,
+frames and component order. <code class="docutils literal notranslate"><span class="pre">joint_q</span></code> uses generalized coordinates
+(including XYZW quaternions), while <code class="docutils literal notranslate"><span class="pre">joint_qd</span></code> uses velocity DOFs;
+their widths can differ. Standard fields have camelCase names. On
+angular joint axes, positions, velocities, targets and limits
+are in degrees or degrees/s, gains are per degree, and efforts are not
+converted; these fields follow the authored body order. Body angular
+velocity stays in radians/s.
+Reads preserve model length units and do not normalize to SI.</p>
+<p>Each group identifies shared prim rows; its columns hold the requested
+attributes, independent row mappings and CUDA readiness.
+Native body columns and compatible single-width joint columns refer
+directly to arrays from <code class="docutils literal notranslate"><span class="pre">state</span></code>, <code class="docutils literal notranslate"><span class="pre">control</span></code> or the connected model
+and may include unselected storage rows plus a row map. A joint
+selection borrows only when it has one width and compatible
+source-offset alignment; mixed widths or incompatible offsets require
+a device gather. Split body/root fields, materials and converted joint
+fields allocate output on the model device. See <a class="reference internal" href="output-reads.html"><span class="doc">Read simulation output</span></a>
+for the per-field contract. Use each column’s <code class="docutils literal notranslate"><span class="pre">data_row_index(i)</span></code> or
+<code class="docutils literal notranslate"><span class="pre">data_index_dlpack()</span></code> to locate logical prim <code class="docutils literal notranslate"><span class="pre">i</span></code>. Do not mutate
+borrowed state, control or model arrays until every reader has
+finished.</p>
+<p>CPU data is ready when this method returns. On CUDA, call this method
+on the Warp stream that last wrote the requested state, control or
+model arrays, or first make the current stream wait for that work.
+CUDA work does not block the CPU; a reader on another CUDA stream must
+wait for <code class="docutils literal notranslate"><span class="pre">column.cuda_sync.wait_event</span></code>. Retain the result, group or
+column through consumer completion. The event reports producer
+readiness, not consumer completion.
+Borrowed results are live views, so state-buffer reuse, control writes
+such as <code class="docutils literal notranslate"><span class="pre">Control.clear()</span></code> or model edits require coordination with
+every reader; copy explicitly for history.
+Results need no explicit release, and their zero-valued ordinal metadata
+does not identify a simulation tick.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>state</strong> (<em>newton.State</em><em> | </em><em>None</em>)</p></li>
+<li><p><strong>control</strong> (<em>newton.Control</em><em> | </em><em>None</em>)</p></li>
+<li><p><strong>query</strong> (<em>Optional</em><em>[</em><a class="reference internal" href="#ovnewton.Query" title="ovnewton.Query"><em>Query</em></a><em>]</em>)</p></li>
+<li><p><strong>attributes</strong> (<em>Sequence</em><em>[</em><em>str</em><em> | </em><em>int</em><em> | </em><em>ovstage.Token</em><em>]</em>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p><a class="reference internal" href="#ovnewton.ReadResult" title="ovnewton.ReadResult">ReadResult</a></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ovnewton.StageBinding.write">
+<span class="sig-name descname"><span class="pre">write</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">values</span></span></em>, <em class="sig-param"><span class="keyword-only-separator o"><abbr title="Keyword-only parameters separator (PEP 3102)"><span class="pre">*</span></abbr></span></em>, <em class="sig-param"><span class="n"><span class="pre">control</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">query</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ovnewton.StageBinding.write" title="Link to this definition">#</a></dt>
+<dd><p>Replace selected native scalar joint targets without stage writes.</p>
+<p>Supported names are <code class="docutils literal notranslate"><span class="pre">joint_target_q</span></code> and <code class="docutils literal notranslate"><span class="pre">joint_target_qd</span></code>.
+Values are one-dimensional float32 Warp arrays on the model device.
+The query must select only scalar articulation joints. Rows follow the
+corresponding public read’s logical prim order, not its storage rows.
+Values use Newton’s native units and signs, including radians, with
+no USD conversion.</p>
+<p>All input shapes, dtypes and finite values are checked before mutation.
+Payloads stay on the device; only a validation flag is read on the host.
+Inputs are copied and may be reused after return. Unselected values
+survive. Calls are synchronous and cannot run during CUDA graph capture.
+Use the producer’s stream or establish a stream dependency first.
+The application owns solver configuration and step ordering. No state,
+forces, model properties or topology are changed.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>values</strong> (<em>Mapping</em><em>[</em><em>str</em><em>, </em><em>wp.array</em><em>[</em><em>Any</em><em>]</em><em>]</em>)</p></li>
+<li><p><strong>control</strong> (<em>newton.Control</em>)</p></li>
+<li><p><strong>query</strong> (<a class="reference internal" href="#ovnewton.Query" title="ovnewton.Query"><em>Query</em></a>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ovnewton.StageBinding.update_to_ovstage">
+<span class="sig-name descname"><span class="pre">update_to_ovstage</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">state</span></span></em>, <em class="sig-param"><span class="keyword-only-separator o"><abbr title="Keyword-only parameters separator (PEP 3102)"><span class="pre">*</span></abbr></span></em>, <em class="sig-param"><span class="n"><span class="pre">ordinal</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ovnewton.StageBinding.update_to_ovstage" title="Link to this definition">#</a></dt>
+<dd><p>Write the current Newton state to ovstage at <code class="docutils literal notranslate"><span class="pre">ordinal</span></code>.</p>
+<p>Body world poses are written through <code class="docutils literal notranslate"><span class="pre">omni:xform</span></code> with
+<code class="docutils literal notranslate"><span class="pre">omni:resetXformStack</span></code> enabled. This also writes body velocities and
+supported one-axis joint positions and velocities. The writes finish
+before this method returns. Call
+<code class="docutils literal notranslate"><span class="pre">stage.advance_write_floor(ordinal)</span></code> to make them visible to readers.</p>
+<p>Raises <code class="xref py py-class docutils literal notranslate"><span class="pre">ValueError</span></code> if an array has the wrong size or device.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>state</strong> (<em>newton.State</em>)</p></li>
+<li><p><strong>ordinal</strong> (<em>int</em>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ovnewton.StageBinding.update_from_ovstage">
+<span class="sig-name descname"><span class="pre">update_from_ovstage</span></span><span class="sig-paren">(</span>
+
+<dl>
+<dd><em class="sig-param"><span class="n"><span class="pre">state</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">control</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="keyword-only-separator o"><abbr title="Keyword-only parameters separator (PEP 3102)"><span class="pre">*</span></abbr></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">ordinal</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">attributes</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>,</dd>
+</dl>
+
+<span class="sig-paren">)</span><a class="headerlink" href="#ovnewton.StageBinding.update_from_ovstage" title="Link to this definition">#</a></dt>
+<dd><p>Apply sealed state and drive targets from ovstage.</p>
+<p>With <code class="docutils literal notranslate"><span class="pre">attributes=None</span></code> (the default), read all supported body/joint
+state and drive targets. Body poses include ancestor transforms.
+Select any combination of <code class="docutils literal notranslate"><span class="pre">body_q</span></code>, <code class="docutils literal notranslate"><span class="pre">body_qd</span></code>, <code class="docutils literal notranslate"><span class="pre">jointPosition</span></code>,
+<code class="docutils literal notranslate"><span class="pre">jointVelocity</span></code>, <code class="docutils literal notranslate"><span class="pre">jointPositionTarget</span></code>, and <code class="docutils literal notranslate"><span class="pre">jointVelocityTarget</span></code>
+to update only those fields. Joint fields cover existing single-DOF
+channels; other coordinates and unselected arrays stay unchanged.
+Explicit selections do not run forward/inverse kinematics or reconcile
+body and joint state. Use the default full resync for body-derived joint
+coordinates. An empty selection is a no-op; unknown names are rejected.</p>
+<p>Joint angular values convert from stage degrees to Newton radians;
+linear values retain the stage’s length units. If <code class="docutils literal notranslate"><span class="pre">ordinal</span></code> is
+omitted, read the latest sealed values. An explicit ordinal is a
+consistency ceiling, not a request for historical payloads.</p>
+<p>Raises <a class="reference internal" href="#ovnewton.OvstageContractError" title="ovnewton.OvstageContractError"><code class="xref py py-class docutils literal notranslate"><span class="pre">ovnewton.OvstageContractError</span></code></a> if the stage cannot provide
+one consistent set of values.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>state</strong> (<em>newton.State</em>)</p></li>
+<li><p><strong>control</strong> (<em>newton.Control</em>)</p></li>
+<li><p><strong>ordinal</strong> (<em>int</em><em> | </em><em>None</em>)</p></li>
+<li><p><strong>attributes</strong> (<em>Sequence</em><em>[</em><em>str</em><em>] </em><em>| </em><em>None</em>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>None</p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+</section>
+<section id="output-reads">
+<h2>Output reads<a class="headerlink" href="#output-reads" title="Link to this heading">#</a></h2>
+<dl class="py class">
+<dt class="sig sig-object py" id="ovnewton.SimObjectType">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">ovnewton.</span></span><span class="sig-name descname"><span class="pre">SimObjectType</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">values</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ovnewton.SimObjectType" title="Link to this definition">#</a></dt>
+<dd><p>Physics object type selected by an output query.</p>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ovnewton.SimObjectType.RIGID_BODY">
+<span class="sig-name descname"><span class="pre">RIGID_BODY</span></span><span class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">0</span></span><a class="headerlink" href="#ovnewton.SimObjectType.RIGID_BODY" title="Link to this definition">#</a></dt>
+<dd><p>Rigid bodies outside the articulation-link selection.</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ovnewton.SimObjectType.ARTICULATION_LINK">
+<span class="sig-name descname"><span class="pre">ARTICULATION_LINK</span></span><span class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">1</span></span><a class="headerlink" href="#ovnewton.SimObjectType.ARTICULATION_LINK" title="Link to this definition">#</a></dt>
+<dd><p>Bodies classified as links in a Newton articulation.</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ovnewton.SimObjectType.ARTICULATION_JOINT">
+<span class="sig-name descname"><span class="pre">ARTICULATION_JOINT</span></span><span class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">2</span></span><a class="headerlink" href="#ovnewton.SimObjectType.ARTICULATION_JOINT" title="Link to this definition">#</a></dt>
+<dd><p>Articulation joints with readable coordinates/DOFs; excludes free joints.</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ovnewton.SimObjectType.ARTICULATION">
+<span class="sig-name descname"><span class="pre">ARTICULATION</span></span><span class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">9</span></span><a class="headerlink" href="#ovnewton.SimObjectType.ARTICULATION" title="Link to this definition">#</a></dt>
+<dd><p>Authored PhysicsArticulationRootAPI or NewtonArticulationRootAPI prims.</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ovnewton.SimObjectType.PHYSICS_SCENE">
+<span class="sig-name descname"><span class="pre">PHYSICS_SCENE</span></span><span class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">11</span></span><a class="headerlink" href="#ovnewton.SimObjectType.PHYSICS_SCENE" title="Link to this definition">#</a></dt>
+<dd><p>The effective PhysicsScene prim, for gravity reads.</p>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="ovnewton.ObjectScope">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">ovnewton.</span></span><span class="sig-name descname"><span class="pre">ObjectScope</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">values</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ovnewton.ObjectScope" title="Link to this definition">#</a></dt>
+<dd><p>Membership rule for an output query.</p>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ovnewton.ObjectScope.ALL">
+<span class="sig-name descname"><span class="pre">ALL</span></span><span class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">0</span></span><a class="headerlink" href="#ovnewton.ObjectScope.ALL" title="Link to this definition">#</a></dt>
+<dd><p>All matching bound objects; reusable while the binding topology is fixed.</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ovnewton.ObjectScope.ACTIVE">
+<span class="sig-name descname"><span class="pre">ACTIVE</span></span><span class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">1</span></span><a class="headerlink" href="#ovnewton.ObjectScope.ACTIVE" title="Link to this definition">#</a></dt>
+<dd><p>Reserved; requesting this scope raises NotImplementedError.</p>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="ovnewton.Query">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">ovnewton.</span></span><span class="sig-name descname"><span class="pre">Query</span></span><span class="sig-paren">(</span>
+
+<dl>
+<dd><em class="sig-param"><span class="n"><span class="pre">binding</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="keyword-only-separator o"><abbr title="Keyword-only parameters separator (PEP 3102)"><span class="pre">*</span></abbr></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">body_index_array</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">body_index_tensor</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">body_indices_host</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">body_prim_list</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">body_count</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">scene_prim_list</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">scene_count</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">shape_counts</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">shape_indices</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">shape_width</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">articulation_index_array</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">articulation_prim_list</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">articulation_count</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">joint_q</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">native_joint_dofs</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">joint_dof</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">joint_position</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">joint_velocity</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">joint_position_target</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">attributes</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">prim_count</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">object_type</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">scope</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">path_lists</span></span></em>,</dd>
+</dl>
+
+<span class="sig-paren">)</span><a class="headerlink" href="#ovnewton.Query" title="Link to this definition">#</a></dt>
+<dd><p>Reusable selection of bound Newton scene objects.</p>
+<p>Returned by <a class="reference internal" href="#ovnewton.StageBinding.query" title="ovnewton.StageBinding.query"><code class="xref py py-meth docutils literal notranslate"><span class="pre">StageBinding.query()</span></code></a>. <code class="docutils literal notranslate"><span class="pre">attributes</span></code> contains interned
+name tokens for fields supported by the selected topology; resolve them
+with <code class="docutils literal notranslate"><span class="pre">ovstage.PathDictionary.token_to_string()</span></code>. It does not check the
+state/control supplied later: optional acceleration buffers, targets or an
+unambiguous gravity-world mapping may still be unavailable at read time.
+<code class="docutils literal notranslate"><span class="pre">prim_count</span></code> counts selected bodies, articulation roots, joints and scenes.</p>
+<p>Reuse this selection only with its originating binding and unchanged
+topology, labels, joint axes and shape membership. Structural changes
+require a new binding and queries; no automatic invalidation token is
+provided. See <a class="reference internal" href="output-reads.html"><span class="doc">Read simulation output</span></a> for field formats and availability.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>binding</strong> (<a class="reference internal" href="#ovnewton.StageBinding" title="ovnewton.StageBinding"><em>StageBinding</em></a>)</p></li>
+<li><p><strong>body_index_array</strong> (<em>wp.array</em><em> | </em><em>None</em>)</p></li>
+<li><p><strong>body_index_tensor</strong> (<em>ovstage.DLTensor</em><em> | </em><em>None</em>)</p></li>
+<li><p><strong>body_indices_host</strong> (<em>Optional</em><em>[</em><em>Tuple</em><em>[</em><em>int</em><em>, </em><em>...</em><em>]</em><em>]</em>)</p></li>
+<li><p><strong>body_prim_list</strong> (<em>Any</em>)</p></li>
+<li><p><strong>body_count</strong> (<em>int</em>)</p></li>
+<li><p><strong>scene_prim_list</strong> (<em>Any</em>)</p></li>
+<li><p><strong>scene_count</strong> (<em>int</em>)</p></li>
+<li><p><strong>shape_counts</strong> (<em>wp.array</em><em> | </em><em>None</em>)</p></li>
+<li><p><strong>shape_indices</strong> (<em>wp.array</em><em> | </em><em>None</em>)</p></li>
+<li><p><strong>shape_width</strong> (<em>int</em>)</p></li>
+<li><p><strong>articulation_index_array</strong> (<em>wp.array</em><em> | </em><em>None</em>)</p></li>
+<li><p><strong>articulation_prim_list</strong> (<em>Any</em>)</p></li>
+<li><p><strong>articulation_count</strong> (<em>int</em>)</p></li>
+<li><p><strong>joint_q</strong> (<em>_JointOutputSelection</em><em> | </em><em>None</em>)</p></li>
+<li><p><strong>native_joint_dofs</strong> (<em>_JointOutputSelection</em><em> | </em><em>None</em>)</p></li>
+<li><p><strong>joint_dof</strong> (<em>_JointOutputSelection</em><em> | </em><em>None</em>)</p></li>
+<li><p><strong>joint_position</strong> (<em>_JointOutputSelection</em><em> | </em><em>None</em>)</p></li>
+<li><p><strong>joint_velocity</strong> (<em>_JointOutputSelection</em><em> | </em><em>None</em>)</p></li>
+<li><p><strong>joint_position_target</strong> (<em>_JointOutputSelection</em><em> | </em><em>None</em>)</p></li>
+<li><p><strong>attributes</strong> (<em>Tuple</em><em>[</em><em>ovstage.Token</em><em>, </em><em>...</em><em>]</em>)</p></li>
+<li><p><strong>prim_count</strong> (<em>int</em>)</p></li>
+<li><p><strong>object_type</strong> (<a class="reference internal" href="#ovnewton.SimObjectType" title="ovnewton.SimObjectType"><em>SimObjectType</em></a><em> | </em><em>None</em>)</p></li>
+<li><p><strong>scope</strong> (<a class="reference internal" href="#ovnewton.ObjectScope" title="ovnewton.ObjectScope"><em>ObjectScope</em></a>)</p></li>
+<li><p><strong>path_lists</strong> (<em>Tuple</em><em>[</em><em>ovstage.PrimPathList</em><em>, </em><em>...</em><em>]</em>)</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="ovnewton.ReadResult">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">ovnewton.</span></span><span class="sig-name descname"><span class="pre">ReadResult</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">groups</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ovnewton.ReadResult" title="Link to this definition">#</a></dt>
+<dd><p>Read-only output groups from one read.</p>
+<p>A result may refer to arrays from the state or model used by
+<a class="reference internal" href="#ovnewton.StageBinding.read" title="ovnewton.StageBinding.read"><code class="xref py py-meth docutils literal notranslate"><span class="pre">StageBinding.read()</span></code></a> instead of a copy. Borrowing depends on the
+selection and layout; derived and gathered columns own per-read buffers.
+Retention preserves allocation lifetime, not a snapshot of borrowed values.
+Keep source arrays unchanged and retain the result until consumers finish.</p>
+<p>Its metadata does not identify a simulation step. Results need no explicit
+close or release. Managed DLPack exports retain their columns independently.
+This object is returned by <a class="reference internal" href="#ovnewton.StageBinding.read" title="ovnewton.StageBinding.read"><code class="xref py py-meth docutils literal notranslate"><span class="pre">StageBinding.read()</span></code></a> and is not constructed
+directly. See <a class="reference internal" href="output-reads.html"><span class="doc">Read simulation output</span></a> for storage and synchronization rules.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>groups</strong> (<em>tuple</em><em>[</em><a class="reference internal" href="#ovnewton.ReadGroup" title="ovnewton._src.ovnewton.ReadGroup"><em>ReadGroup</em></a><em>, </em><em>...</em><em>]</em>)</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="ovnewton.ReadGroup">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">ovnewton.</span></span><span class="sig-name descname"><span class="pre">ReadGroup</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">storage</span></span></em>, <em class="sig-param"><span class="keyword-only-separator o"><abbr title="Keyword-only parameters separator (PEP 3102)"><span class="pre">*</span></abbr></span></em>, <em class="sig-param"><span class="n"><span class="pre">prim_list</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">prim_count</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">columns</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ovnewton.ReadGroup" title="Link to this definition">#</a></dt>
+<dd><p>Shared logical prim rows and their read-only attribute columns.</p>
+<p>Resolve <code class="docutils literal notranslate"><span class="pre">prim_list</span></code> through the stage’s path dictionary. Row <code class="docutils literal notranslate"><span class="pre">i</span></code> names
+the same prim in every column, but each column has its own tensor layout
+and <code class="docutils literal notranslate"><span class="pre">data_row_index(i)</span></code>. Columns are ordered by the requested attributes.
+<code class="docutils literal notranslate"><span class="pre">object_type</span></code> is the query’s filter, or <code class="docutils literal notranslate"><span class="pre">None</span></code> for an unfiltered query.</p>
+<p>Unlike an OVStage read, this result does not pin stage storage and needs no
+explicit release. Keeping a group, column or managed DLPack export alive
+retains the required Newton storage, query and CUDA event. Borrowed values
+remain live; retain results and prevent source writes until consumers finish.
+Construct groups through <a class="reference internal" href="#ovnewton.StageBinding.read" title="ovnewton.StageBinding.read"><code class="xref py py-meth docutils literal notranslate"><span class="pre">StageBinding.read()</span></code></a>, not directly.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>storage</strong> (<em>_ReadStorage</em>)</p></li>
+<li><p><strong>prim_list</strong> (<em>ovstage.PrimPathList</em>)</p></li>
+<li><p><strong>prim_count</strong> (<em>int</em>)</p></li>
+<li><p><strong>columns</strong> (<em>Sequence</em><em>[</em><a class="reference internal" href="#ovnewton.ReadColumn" title="ovnewton.ReadColumn"><em>ReadColumn</em></a><em>]</em>)</p></li>
+</ul>
+</dd>
+</dl>
+<dl class="py property">
+<dt class="sig sig-object py" id="ovnewton.ReadGroup.column_count">
+<span class="property"><span class="k"><span class="pre">property</span></span><span class="w"> </span></span><span class="sig-name descname"><span class="pre">column_count</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">int</span></span><a class="headerlink" href="#ovnewton.ReadGroup.column_count" title="Link to this definition">#</a></dt>
+<dd><p>Number of attribute columns sharing these prim rows.</p>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ovnewton.ReadGroup.prim_index">
+<span class="sig-name descname"><span class="pre">prim_index</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">local</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ovnewton.ReadGroup.prim_index" title="Link to this definition">#</a></dt>
+<dd><p>Return the prim index for row <code class="docutils literal notranslate"><span class="pre">local</span></code>.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>local</strong> (<em>int</em>)</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>int</p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="ovnewton.ReadColumn">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">ovnewton.</span></span><span class="sig-name descname"><span class="pre">ReadColumn</span></span><span class="sig-paren">(</span>
+
+<dl>
+<dd><em class="sig-param"><span class="n"><span class="pre">storage</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="keyword-only-separator o"><abbr title="Keyword-only parameters separator (PEP 3102)"><span class="pre">*</span></abbr></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">attribute</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">data_count</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">tensor</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">data_indices</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">data_index_tensor</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em>,</dd>
+</dl>
+
+<span class="sig-paren">)</span><a class="headerlink" href="#ovnewton.ReadColumn" title="Link to this definition">#</a></dt>
+<dd><p>One read-only attribute aligned to its group’s logical prim rows.</p>
+<p>This object is returned in <code class="xref py py-attr docutils literal notranslate"><span class="pre">ReadGroup.columns</span></code> and is not constructed
+directly.</p>
+<p><code class="docutils literal notranslate"><span class="pre">attribute</span></code> is an interned field-name token. <code class="docutils literal notranslate"><span class="pre">data_row_index(i)</span></code> maps
+logical prim <code class="docutils literal notranslate"><span class="pre">i</span></code> in the group to this column’s storage row; the tensor can
+include unselected rows. Each column has one packed DLTensor with shape
+<code class="docutils literal notranslate"><span class="pre">(storage_rows,)</span></code> and <code class="docutils literal notranslate"><span class="pre">dtype.lanes</span></code> scalar components per row. Columns in
+different groups can have the same attribute with different widths. Values
+are float32 except int32 <code class="docutils literal notranslate"><span class="pre">shapeCount</span></code>; an optional uint32 data-index tensor
+provides the row map on the payload device.</p>
+<p>Keeping the column alive retains its data, query and readiness event, but
+does not freeze borrowed values. Prevent source writes until consumers
+finish. CPU data is ready on return from <a class="reference internal" href="#ovnewton.StageBinding.read" title="ovnewton.StageBinding.read"><code class="xref py py-meth docutils literal notranslate"><span class="pre">StageBinding.read()</span></code></a>; a CUDA
+consumer on another stream must wait for <code class="docutils literal notranslate"><span class="pre">cuda_sync.wait_event</span></code>. Retain
+the column through asynchronous consumer completion. <code class="docutils literal notranslate"><span class="pre">ordinal</span></code>, <code class="docutils literal notranslate"><span class="pre">semantic</span></code>
+and <code class="docutils literal notranslate"><span class="pre">meta</span></code> are zero placeholders, not sample or representation identifiers.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>storage</strong> (<em>_ReadStorage</em>)</p></li>
+<li><p><strong>attribute</strong> (<em>ovstage.Token</em>)</p></li>
+<li><p><strong>data_count</strong> (<em>int</em>)</p></li>
+<li><p><strong>tensor</strong> (<em>ovstage.DLTensor</em>)</p></li>
+<li><p><strong>data_indices</strong> (<em>Optional</em><em>[</em><em>Tuple</em><em>[</em><em>int</em><em>, </em><em>...</em><em>]</em><em>]</em>)</p></li>
+<li><p><strong>data_index_tensor</strong> (<em>ovstage.DLTensor</em><em> | </em><em>None</em>)</p></li>
+</ul>
+</dd>
+</dl>
+<dl class="py method">
+<dt class="sig sig-object py" id="ovnewton.ReadColumn.data_row_index">
+<span class="sig-name descname"><span class="pre">data_row_index</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">local</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ovnewton.ReadColumn.data_row_index" title="Link to this definition">#</a></dt>
+<dd><p>Return the tensor row for prim <code class="docutils literal notranslate"><span class="pre">local</span></code>.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>local</strong> (<em>int</em>)</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>int</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ovnewton.ReadColumn.tensor">
+<span class="sig-name descname"><span class="pre">tensor</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">index</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ovnewton.ReadColumn.tensor" title="Link to this definition">#</a></dt>
+<dd><p>Return a raw packed DLTensor; retain this column while using it.</p>
+<p>Use <a class="reference internal" href="#ovnewton.ReadColumn.data_row_index" title="ovnewton.ReadColumn.data_row_index"><code class="xref py py-meth docutils literal notranslate"><span class="pre">data_row_index()</span></code></a> to map selected prims to storage rows.
+The descriptor’s shape counts storage rows, not selected objects.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>index</strong> (<em>int</em>)</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>ovstage.DLTensor</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ovnewton.ReadColumn.array">
+<span class="sig-name descname"><span class="pre">array</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">index</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ovnewton.ReadColumn.array" title="Link to this definition">#</a></dt>
+<dd><p>Return a read-only NumPy view of CPU storage without copying it.</p>
+<p>Lane components are expanded into scalar dimensions. Retain this column
+while using the view and apply <a class="reference internal" href="#ovnewton.ReadColumn.data_row_index" title="ovnewton.ReadColumn.data_row_index"><code class="xref py py-meth docutils literal notranslate"><span class="pre">data_row_index()</span></code></a> for selected prims.
+CUDA storage must be consumed on device or explicitly copied to CPU.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>index</strong> (<em>int</em>)</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>npt.NDArray[np.generic]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ovnewton.ReadColumn.dlpack">
+<span class="sig-name descname"><span class="pre">dlpack</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">index</span></span></em>, <em class="sig-param"><span class="keyword-only-separator o"><abbr title="Keyword-only parameters separator (PEP 3102)"><span class="pre">*</span></abbr></span></em>, <em class="sig-param"><span class="n"><span class="pre">readonly</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ovnewton.ReadColumn.dlpack" title="Link to this definition">#</a></dt>
+<dd><p>Return a managed DLPack export retaining this column and its storage.</p>
+<p>Only <code class="docutils literal notranslate"><span class="pre">readonly=True</span></code> is supported. Treat the export as read-only even
+if a consumer permits writes. Exporting does not copy, normalize values
+or wait for CUDA completion; follow <code class="xref py py-attr docutils literal notranslate"><span class="pre">cuda_sync</span></code> before consuming.
+Borrowed values remain live until the application copies them.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>index</strong> (<em>int</em>)</p></li>
+<li><p><strong>readonly</strong> (<em>bool</em>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>ovstage.ManagedDLTensor</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ovnewton.ReadColumn.data_index_tensor">
+<span class="sig-name descname"><span class="pre">data_index_tensor</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#ovnewton.ReadColumn.data_index_tensor" title="Link to this definition">#</a></dt>
+<dd><p>Return the optional raw DLTensor row map.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>ovstage.DLTensor | None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ovnewton.ReadColumn.data_index_array">
+<span class="sig-name descname"><span class="pre">data_index_array</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#ovnewton.ReadColumn.data_index_array" title="Link to this definition">#</a></dt>
+<dd><p>Return the optional read-only CPU row map.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>npt.NDArray[np.generic] | None</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py method">
+<dt class="sig sig-object py" id="ovnewton.ReadColumn.data_index_dlpack">
+<span class="sig-name descname"><span class="pre">data_index_dlpack</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="keyword-only-separator o"><abbr title="Keyword-only parameters separator (PEP 3102)"><span class="pre">*</span></abbr></span></em>, <em class="sig-param"><span class="n"><span class="pre">readonly</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">True</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ovnewton.ReadColumn.data_index_dlpack" title="Link to this definition">#</a></dt>
+<dd><p>Return the optional read-only DLPack row map.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><p><strong>readonly</strong> (<em>bool</em>)</p>
+</dd>
+<dt class="field-even">Return type<span class="colon">:</span></dt>
+<dd class="field-even"><p>ovstage.ManagedDLTensor | None</p>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="ovnewton.ReadColumnMeta">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">ovnewton.</span></span><span class="sig-name descname"><span class="pre">ReadColumnMeta</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">attribute_write_floor_ordinal</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">layout_generation</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ovnewton.ReadColumnMeta" title="Link to this definition">#</a></dt>
+<dd><p>Metadata attached to a generated output column.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>attribute_write_floor_ordinal</strong> (<em>int</em>)</p></li>
+<li><p><strong>layout_generation</strong> (<em>int</em>)</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="ovnewton.ReadColumnCudaSync">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">ovnewton.</span></span><span class="sig-name descname"><span class="pre">ReadColumnCudaSync</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">stream</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">wait_event</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ovnewton.ReadColumnCudaSync" title="Link to this definition">#</a></dt>
+<dd><p>CUDA dependency attached to a generated output column.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>stream</strong> (<em>int</em>)</p></li>
+<li><p><strong>wait_event</strong> (<em>int</em>)</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="ovnewton.read_fields">
+<span class="sig-prename descclassname"><span class="pre">ovnewton.</span></span><span class="sig-name descname"><span class="pre">read_fields</span></span><span class="sig-paren">(</span><span class="sig-paren">)</span><a class="headerlink" href="#ovnewton.read_fields" title="Link to this definition">#</a></dt>
+<dd><p>Return the declaration of every field that <code class="docutils literal notranslate"><span class="pre">StageBinding.read()</span></code> accepts.</p>
+<p>The mapping is read-only and keyed by field name. No simulation code is
+loaded.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><em>Mapping</em>[str, <a class="reference internal" href="#ovnewton.ReadField" title="ovnewton._src._read_fields.ReadField"><em>ReadField</em></a>]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="ovnewton.ReadField">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">ovnewton.</span></span><span class="sig-name descname"><span class="pre">ReadField</span></span><span class="sig-paren">(</span>
+
+<dl>
+<dd><em class="sig-param"><span class="n"><span class="pre">name</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">summary</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">objects</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">identity</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">sources</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">newton_fields</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">requires</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">dtype</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">lanes</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">lanes_rule</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">components</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">layout</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">units</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">unit_terms</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">frame</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">frame_tag</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">conversion</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">storage</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">device</span></span></em>,</dd>
+<dd><em class="sig-param"><span class="n"><span class="pre">joint_layouts</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">()</span></span></em>,</dd>
+</dl>
+
+<span class="sig-paren">)</span><a class="headerlink" href="#ovnewton.ReadField" title="Link to this definition">#</a></dt>
+<dd><p>What one <code class="docutils literal notranslate"><span class="pre">StageBinding.read()</span></code> field returns.</p>
+<p>Every value comes from <code class="docutils literal notranslate"><span class="pre">contracts/read_fields.json</span></code>. Tests check each
+declaration against actual reads.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>name</strong> (<em>str</em>)</p></li>
+<li><p><strong>summary</strong> (<em>str</em>)</p></li>
+<li><p><strong>objects</strong> (<em>tuple</em><em>[</em><em>Literal</em><em>[</em><em>'rigid_body'</em><em>, </em><em>'articulation_link'</em><em>, </em><em>'articulation_root'</em><em>, </em><em>'physics_scene'</em><em>, </em><em>'articulation_joint'</em><em>, </em><em>'joint'</em><em>]</em><em>, </em><em>...</em><em>]</em>)</p></li>
+<li><p><strong>identity</strong> (<em>str</em>)</p></li>
+<li><p><strong>sources</strong> (<em>tuple</em><em>[</em><em>str</em><em>, </em><em>...</em><em>]</em>)</p></li>
+<li><p><strong>newton_fields</strong> (<em>tuple</em><em>[</em><em>str</em><em>, </em><em>...</em><em>]</em>)</p></li>
+<li><p><strong>requires</strong> (<em>Literal</em><em>[</em><em>'state'</em><em>, </em><em>'control'</em><em>, </em><em>'model'</em><em>]</em>)</p></li>
+<li><p><strong>dtype</strong> (<em>str</em>)</p></li>
+<li><p><strong>lanes</strong> (<em>int</em><em> | </em><em>None</em>)</p></li>
+<li><p><strong>lanes_rule</strong> (<em>str</em><em> | </em><em>None</em>)</p></li>
+<li><p><strong>components</strong> (<em>tuple</em><em>[</em><em>str</em><em>, </em><em>...</em><em>] </em><em>| </em><em>None</em>)</p></li>
+<li><p><strong>layout</strong> (<em>str</em>)</p></li>
+<li><p><strong>units</strong> (<em>str</em>)</p></li>
+<li><p><strong>unit_terms</strong> (<em>tuple</em><em>[</em><a class="reference internal" href="#ovnewton.attributes.UnitTerm" title="ovnewton._src._read_fields.UnitTerm"><em>UnitTerm</em></a><em>, </em><em>...</em><em>]</em>)</p></li>
+<li><p><strong>frame</strong> (<em>str</em><em> | </em><em>None</em>)</p></li>
+<li><p><strong>frame_tag</strong> (<em>Literal</em><em>[</em><em>'world'</em><em>, </em><em>'body'</em><em>, </em><em>'com'</em><em>, </em><em>'joint'</em><em>] </em><em>| </em><em>None</em>)</p></li>
+<li><p><strong>conversion</strong> (<em>str</em><em> | </em><em>None</em>)</p></li>
+<li><p><strong>storage</strong> (<em>Literal</em><em>[</em><em>'borrowed'</em><em>, </em><em>'borrowed_or_gathered'</em><em>, </em><em>'gathered'</em><em>, </em><em>'query_owned'</em><em>]</em>)</p></li>
+<li><p><strong>device</strong> (<em>str</em>)</p></li>
+<li><p><strong>joint_layouts</strong> (<em>tuple</em><em>[</em><a class="reference internal" href="#ovnewton.attributes.JointLayout" title="ovnewton._src._read_fields.JointLayout"><em>JointLayout</em></a><em>, </em><em>...</em><em>]</em>)</p></li>
+</ul>
+</dd>
+</dl>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ovnewton.ReadField.name">
+<span class="sig-name descname"><span class="pre">name</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span></span><a class="headerlink" href="#ovnewton.ReadField.name" title="Link to this definition">#</a></dt>
+<dd><p>The field name to pass in <code class="docutils literal notranslate"><span class="pre">attributes</span></code>. A snake_case name is a Newton
+array name and returns Newton’s values. A camelCase name is a standard
+field; its per-axis joint values use USD joint units on angular axes.</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ovnewton.ReadField.summary">
+<span class="sig-name descname"><span class="pre">summary</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span></span><a class="headerlink" href="#ovnewton.ReadField.summary" title="Link to this definition">#</a></dt>
+<dd><p>One-sentence description.</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ovnewton.ReadField.objects">
+<span class="sig-name descname"><span class="pre">objects</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">tuple</span><span class="p"><span class="pre">[</span></span><span class="pre">Literal</span><span class="p"><span class="pre">[</span></span><span class="s"><span class="pre">'rigid_body'</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="s"><span class="pre">'articulation_link'</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="s"><span class="pre">'articulation_root'</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="s"><span class="pre">'physics_scene'</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="s"><span class="pre">'articulation_joint'</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="s"><span class="pre">'joint'</span></span><span class="p"><span class="pre">]</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="p"><span class="pre">...</span></span><span class="p"><span class="pre">]</span></span></span><a class="headerlink" href="#ovnewton.ReadField.objects" title="Link to this definition">#</a></dt>
+<dd><p><code class="docutils literal notranslate"><span class="pre">rigid_body</span></code>, <code class="docutils literal notranslate"><span class="pre">articulation_link</span></code>,
+<code class="docutils literal notranslate"><span class="pre">articulation_root</span></code>, <code class="docutils literal notranslate"><span class="pre">physics_scene</span></code>, <code class="docutils literal notranslate"><span class="pre">articulation_joint</span></code> or
+<code class="docutils literal notranslate"><span class="pre">joint</span></code> (any bound joint, including articulation joints).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Object kinds that can produce rows</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ovnewton.ReadField.identity">
+<span class="sig-name descname"><span class="pre">identity</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span></span><a class="headerlink" href="#ovnewton.ReadField.identity" title="Link to this definition">#</a></dt>
+<dd><p>Which prim a row belongs to.</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ovnewton.ReadField.sources">
+<span class="sig-name descname"><span class="pre">sources</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">tuple</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="p"><span class="pre">...</span></span><span class="p"><span class="pre">]</span></span></span><a class="headerlink" href="#ovnewton.ReadField.sources" title="Link to this definition">#</a></dt>
+<dd><p>The Newton arrays the values come from, such as <code class="docutils literal notranslate"><span class="pre">&quot;State.body_q&quot;</span></code>.</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ovnewton.ReadField.newton_fields">
+<span class="sig-name descname"><span class="pre">newton_fields</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">tuple</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="p"><span class="pre">...</span></span><span class="p"><span class="pre">]</span></span></span><a class="headerlink" href="#ovnewton.ReadField.newton_fields" title="Link to this definition">#</a></dt>
+<dd><p>For a standard field, the Newton fields that read the same Newton
+arrays, such as <code class="docutils literal notranslate"><span class="pre">(&quot;joint_qd&quot;,)</span></code> for <code class="docutils literal notranslate"><span class="pre">jointVelocity</span></code>. Empty for a
+Newton field, and for a standard field whose arrays have no Newton field.</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ovnewton.ReadField.requires">
+<span class="sig-name descname"><span class="pre">requires</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">Literal</span><span class="p"><span class="pre">[</span></span><span class="s"><span class="pre">'state'</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="s"><span class="pre">'control'</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="s"><span class="pre">'model'</span></span><span class="p"><span class="pre">]</span></span></span><a class="headerlink" href="#ovnewton.ReadField.requires" title="Link to this definition">#</a></dt>
+<dd><p><code class="docutils literal notranslate"><span class="pre">state</span></code>, <code class="docutils literal notranslate"><span class="pre">control</span></code>, or
+<code class="docutils literal notranslate"><span class="pre">model</span></code> when the connected model alone is enough.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>The <code class="docutils literal notranslate"><span class="pre">read()</span></code> input that must be supplied</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ovnewton.ReadField.dtype">
+<span class="sig-name descname"><span class="pre">dtype</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span></span><a class="headerlink" href="#ovnewton.ReadField.dtype" title="Link to this definition">#</a></dt>
+<dd><p><code class="docutils literal notranslate"><span class="pre">float32</span></code> or <code class="docutils literal notranslate"><span class="pre">int32</span></code>.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>Data type of each value</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ovnewton.ReadField.lanes">
+<span class="sig-name descname"><span class="pre">lanes</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">int</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><a class="headerlink" href="#ovnewton.ReadField.lanes" title="Link to this definition">#</a></dt>
+<dd><p>Values per row, or <code class="docutils literal notranslate"><span class="pre">None</span></code> when the count depends on the selection.</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ovnewton.ReadField.lanes_rule">
+<span class="sig-name descname"><span class="pre">lanes_rule</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><a class="headerlink" href="#ovnewton.ReadField.lanes_rule" title="Link to this definition">#</a></dt>
+<dd><p>How the value count is chosen when <code class="docutils literal notranslate"><span class="pre">lanes</span></code> is <code class="docutils literal notranslate"><span class="pre">None</span></code>.</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ovnewton.ReadField.components">
+<span class="sig-name descname"><span class="pre">components</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">tuple</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="p"><span class="pre">...</span></span><span class="p"><span class="pre">]</span></span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><a class="headerlink" href="#ovnewton.ReadField.components" title="Link to this definition">#</a></dt>
+<dd><p>Name of each value in a row, when <code class="docutils literal notranslate"><span class="pre">lanes</span></code> is fixed.</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ovnewton.ReadField.layout">
+<span class="sig-name descname"><span class="pre">layout</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span></span><a class="headerlink" href="#ovnewton.ReadField.layout" title="Link to this definition">#</a></dt>
+<dd><p>How values are ordered in a row.</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ovnewton.ReadField.units">
+<span class="sig-name descname"><span class="pre">units</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span></span><a class="headerlink" href="#ovnewton.ReadField.units" title="Link to this definition">#</a></dt>
+<dd><p>Units of the values. For joint fields, this gives linear and angular axes separately.</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ovnewton.ReadField.unit_terms">
+<span class="sig-name descname"><span class="pre">unit_terms</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">tuple</span><span class="p"><span class="pre">[</span></span><a class="reference internal" href="#ovnewton.attributes.UnitTerm" title="ovnewton._src._read_fields.UnitTerm"><span class="pre">UnitTerm</span></a><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="p"><span class="pre">...</span></span><span class="p"><span class="pre">]</span></span></span><a class="headerlink" href="#ovnewton.ReadField.unit_terms" title="Link to this definition">#</a></dt>
+<dd><p>The same units as structured terms. Empty when the values have no units.</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ovnewton.ReadField.frame">
+<span class="sig-name descname"><span class="pre">frame</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><a class="headerlink" href="#ovnewton.ReadField.frame" title="Link to this definition">#</a></dt>
+<dd><p>Reference frame of the values, or <code class="docutils literal notranslate"><span class="pre">None</span></code> when no frame applies.</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ovnewton.ReadField.frame_tag">
+<span class="sig-name descname"><span class="pre">frame_tag</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">Literal</span><span class="p"><span class="pre">[</span></span><span class="s"><span class="pre">'world'</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="s"><span class="pre">'body'</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="s"><span class="pre">'com'</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="s"><span class="pre">'joint'</span></span><span class="p"><span class="pre">]</span></span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><a class="headerlink" href="#ovnewton.ReadField.frame_tag" title="Link to this definition">#</a></dt>
+<dd><p>A short tag for <code class="docutils literal notranslate"><span class="pre">frame</span></code>. <code class="docutils literal notranslate"><span class="pre">world</span></code>. <code class="docutils literal notranslate"><span class="pre">body</span></code> (the body’s origin frame).
+<code class="docutils literal notranslate"><span class="pre">com</span></code> (the body frame at the center of mass). <code class="docutils literal notranslate"><span class="pre">joint</span></code> (the parent joint
+frame, which also defines the joint axes). <code class="docutils literal notranslate"><span class="pre">None</span></code> when no frame applies.
+Exceptions for free and distance joints are in <code class="docutils literal notranslate"><span class="pre">frame</span></code>.</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ovnewton.ReadField.conversion">
+<span class="sig-name descname"><span class="pre">conversion</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><a class="headerlink" href="#ovnewton.ReadField.conversion" title="Link to this definition">#</a></dt>
+<dd><p>The conversion applied to Newton’s values, or <code class="docutils literal notranslate"><span class="pre">None</span></code> for native values.</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ovnewton.ReadField.storage">
+<span class="sig-name descname"><span class="pre">storage</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">Literal</span><span class="p"><span class="pre">[</span></span><span class="s"><span class="pre">'borrowed'</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="s"><span class="pre">'borrowed_or_gathered'</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="s"><span class="pre">'gathered'</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="s"><span class="pre">'query_owned'</span></span><span class="p"><span class="pre">]</span></span></span><a class="headerlink" href="#ovnewton.ReadField.storage" title="Link to this definition">#</a></dt>
+<dd><p><code class="docutils literal notranslate"><span class="pre">borrowed</span></code> (a live view of the
+Newton array), <code class="docutils literal notranslate"><span class="pre">gathered</span></code> (a buffer written by this read),
+<code class="docutils literal notranslate"><span class="pre">borrowed_or_gathered</span></code> (borrowed when the selection allows it), or
+<code class="docutils literal notranslate"><span class="pre">query_owned</span></code> (computed once when the query was created).</p>
+<dl class="field-list simple">
+<dt class="field-odd">Type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>How the column relates to Newton memory</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ovnewton.ReadField.device">
+<span class="sig-name descname"><span class="pre">device</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span></span><a class="headerlink" href="#ovnewton.ReadField.device" title="Link to this definition">#</a></dt>
+<dd><p>Where the payload lives. <code class="docutils literal notranslate"><span class="pre">model</span></code> means the connected model’s device.</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ovnewton.ReadField.joint_layouts">
+<span class="sig-name descname"><span class="pre">joint_layouts</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">tuple</span><span class="p"><span class="pre">[</span></span><a class="reference internal" href="#ovnewton.attributes.JointLayout" title="ovnewton._src._read_fields.JointLayout"><span class="pre">JointLayout</span></a><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="p"><span class="pre">...</span></span><span class="p"><span class="pre">]</span></span></span><span class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">()</span></span><a class="headerlink" href="#ovnewton.ReadField.joint_layouts" title="Link to this definition">#</a></dt>
+<dd><p>For a joint field whose row layout depends on the joint type, one layout
+for each joint representation. Empty when every joint packs the row the same way.</p>
+</dd></dl>
+
+</dd></dl>
+
+</section>
+<section id="attribute-lookup">
+<h2>Attribute lookup<a class="headerlink" href="#attribute-lookup" title="Link to this heading">#</a></h2>
+<dl class="py function">
+<dt class="sig sig-object py" id="ovnewton.attributes.list_attributes">
+<span class="sig-prename descclassname"><span class="pre">ovnewton.attributes.</span></span><span class="sig-name descname"><span class="pre">list_attributes</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">object_type</span></span></em>, <em class="sig-param"><span class="keyword-only-separator o"><abbr title="Keyword-only parameters separator (PEP 3102)"><span class="pre">*</span></abbr></span></em>, <em class="sig-param"><span class="n"><span class="pre">readable</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ovnewton.attributes.list_attributes" title="Link to this definition">#</a></dt>
+<dd><p>Return the attributes of one object type, in declaration order.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>object_type</strong> (<em>str</em><em> | </em><em>Enum</em>) – A <code class="docutils literal notranslate"><span class="pre">SimObjectType</span></code> member or its name.</p></li>
+<li><p><strong>readable</strong> (<em>bool</em><em> | </em><em>None</em>) – <code class="docutils literal notranslate"><span class="pre">True</span></code> keeps attributes that <code class="docutils literal notranslate"><span class="pre">read()</span></code> returns. <code class="docutils literal notranslate"><span class="pre">False</span></code> keeps
+the others. <code class="docutils literal notranslate"><span class="pre">None</span></code> keeps all. Every declared attribute is readable
+today, so <code class="docutils literal notranslate"><span class="pre">False</span></code> returns an empty list.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Raises<span class="colon">:</span></dt>
+<dd class="field-even"><p><strong>ValueError</strong> – The object type is unknown.</p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>list[<a class="reference internal" href="#ovnewton.ReadField" title="ovnewton._src._read_fields.ReadField"><em>ReadField</em></a>]</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="ovnewton.attributes.get_attribute">
+<span class="sig-prename descclassname"><span class="pre">ovnewton.attributes.</span></span><span class="sig-name descname"><span class="pre">get_attribute</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">object_type</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">name</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ovnewton.attributes.get_attribute" title="Link to this definition">#</a></dt>
+<dd><p>Return one attribute of an object type.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Raises<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>ValueError</strong> – The object type is unknown.</p></li>
+<li><p><strong>KeyError</strong> – The object type has no attribute with that name.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Parameters<span class="colon">:</span></dt>
+<dd class="field-even"><ul class="simple">
+<li><p><strong>object_type</strong> (<em>str</em><em> | </em><em>Enum</em>)</p></li>
+<li><p><strong>name</strong> (<em>str</em>)</p></li>
+</ul>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p><a class="reference internal" href="#ovnewton.ReadField" title="ovnewton._src._read_fields.ReadField"><em>ReadField</em></a></p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="ovnewton.attributes.UnitTerm">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">ovnewton.attributes.</span></span><span class="sig-name descname"><span class="pre">UnitTerm</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">scope</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">dimensions</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">angle_unit</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">None</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ovnewton.attributes.UnitTerm" title="Link to this definition">#</a></dt>
+<dd><p>The unit of some values in a field, as powers of base dimensions.</p>
+<p><code class="docutils literal notranslate"><span class="pre">dimensions</span></code> is a tuple of <code class="docutils literal notranslate"><span class="pre">(name,</span> <span class="pre">exponent)</span></code> pairs. The names are
+<code class="docutils literal notranslate"><span class="pre">mass</span></code>, <code class="docutils literal notranslate"><span class="pre">length</span></code>, <code class="docutils literal notranslate"><span class="pre">time</span></code> and <code class="docutils literal notranslate"><span class="pre">angle</span></code>. For example, a velocity in
+length units per second is <code class="docutils literal notranslate"><span class="pre">((&quot;length&quot;,</span> <span class="pre">1),</span> <span class="pre">(&quot;time&quot;,</span> <span class="pre">-1))</span></code>. Length and
+mass use the model’s units. Time is in seconds.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>scope</strong> (<em>str</em><em> | </em><em>tuple</em><em>[</em><em>str</em><em>, </em><em>...</em><em>]</em>)</p></li>
+<li><p><strong>dimensions</strong> (<em>tuple</em><em>[</em><em>tuple</em><em>[</em><em>str</em><em>, </em><em>int</em><em>]</em><em>, </em><em>...</em><em>]</em>)</p></li>
+<li><p><strong>angle_unit</strong> (<em>Literal</em><em>[</em><em>'radian'</em><em>, </em><em>'degree'</em><em>] </em><em>| </em><em>None</em>)</p></li>
+</ul>
+</dd>
+</dl>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ovnewton.attributes.UnitTerm.scope">
+<span class="sig-name descname"><span class="pre">scope</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">tuple</span><span class="p"><span class="pre">[</span></span><span class="pre">str</span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="p"><span class="pre">...</span></span><span class="p"><span class="pre">]</span></span></span><a class="headerlink" href="#ovnewton.attributes.UnitTerm.scope" title="Link to this definition">#</a></dt>
+<dd><p>The values this term covers. <code class="docutils literal notranslate"><span class="pre">&quot;all&quot;</span></code> covers every value in a row.
+<code class="docutils literal notranslate"><span class="pre">&quot;linear_axes&quot;</span></code> and <code class="docutils literal notranslate"><span class="pre">&quot;angular_axes&quot;</span></code> cover the scalar joint axes of that
+kind. <code class="docutils literal notranslate"><span class="pre">&quot;translation&quot;</span></code> covers the three XYZ coordinates of a free or distance
+joint. <code class="docutils literal notranslate"><span class="pre">&quot;quaternion&quot;</span></code> covers the four XYZW components of a ball, free or
+distance joint. It has no dimensions, so its components are not angles.
+<code class="docutils literal notranslate"><span class="pre">&quot;linear_components&quot;</span></code> and <code class="docutils literal notranslate"><span class="pre">&quot;angular_components&quot;</span></code> cover the linear and
+angular parts of a spatial vector. A tuple names components.</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ovnewton.attributes.UnitTerm.angle_unit">
+<span class="sig-name descname"><span class="pre">angle_unit</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">Literal</span><span class="p"><span class="pre">[</span></span><span class="s"><span class="pre">'radian'</span></span><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="s"><span class="pre">'degree'</span></span><span class="p"><span class="pre">]</span></span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">None</span></span><span class="property"><span class="w"> </span><span class="p"><span class="pre">=</span></span><span class="w"> </span><span class="pre">None</span></span><a class="headerlink" href="#ovnewton.attributes.UnitTerm.angle_unit" title="Link to this definition">#</a></dt>
+<dd><p><code class="docutils literal notranslate"><span class="pre">&quot;radian&quot;</span></code> or <code class="docutils literal notranslate"><span class="pre">&quot;degree&quot;</span></code> when <code class="docutils literal notranslate"><span class="pre">dimensions</span></code> include <code class="docutils literal notranslate"><span class="pre">angle</span></code>, else <code class="docutils literal notranslate"><span class="pre">None</span></code>.</p>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="ovnewton.attributes.JointLayout">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">ovnewton.attributes.</span></span><span class="sig-name descname"><span class="pre">JointLayout</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">representation</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">parts</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ovnewton.attributes.JointLayout" title="Link to this definition">#</a></dt>
+<dd><p>How one joint representation packs its values into a row.</p>
+<p>A field’s <code class="docutils literal notranslate"><span class="pre">unit_terms</span></code> give units for every kind of value the field can
+hold. A layout says which of them one joint representation uses, in row
+order. Picking the layout still depends on the live joint’s type.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>representation</strong> (<em>str</em>)</p></li>
+<li><p><strong>parts</strong> (<em>tuple</em><em>[</em><a class="reference internal" href="#ovnewton.attributes.JointLayoutPart" title="ovnewton._src._read_fields.JointLayoutPart"><em>JointLayoutPart</em></a><em>, </em><em>...</em><em>]</em>)</p></li>
+</ul>
+</dd>
+</dl>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ovnewton.attributes.JointLayout.representation">
+<span class="sig-name descname"><span class="pre">representation</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span></span><a class="headerlink" href="#ovnewton.attributes.JointLayout.representation" title="Link to this definition">#</a></dt>
+<dd><p><code class="docutils literal notranslate"><span class="pre">prismatic</span></code>, <code class="docutils literal notranslate"><span class="pre">revolute</span></code>, <code class="docutils literal notranslate"><span class="pre">ball</span></code>, <code class="docutils literal notranslate"><span class="pre">free</span></code>, <code class="docutils literal notranslate"><span class="pre">distance</span></code> or <code class="docutils literal notranslate"><span class="pre">d6</span></code>.</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ovnewton.attributes.JointLayout.parts">
+<span class="sig-name descname"><span class="pre">parts</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">tuple</span><span class="p"><span class="pre">[</span></span><a class="reference internal" href="#ovnewton.attributes.JointLayoutPart" title="ovnewton._src._read_fields.JointLayoutPart"><span class="pre">JointLayoutPart</span></a><span class="p"><span class="pre">,</span></span><span class="w"> </span><span class="p"><span class="pre">...</span></span><span class="p"><span class="pre">]</span></span></span><a class="headerlink" href="#ovnewton.attributes.JointLayout.parts" title="Link to this definition">#</a></dt>
+<dd><p>The runs of values, in row order.</p>
+</dd></dl>
+
+</dd></dl>
+
+<dl class="py class">
+<dt class="sig sig-object py" id="ovnewton.attributes.JointLayoutPart">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">ovnewton.attributes.</span></span><span class="sig-name descname"><span class="pre">JointLayoutPart</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">scope</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">count</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#ovnewton.attributes.JointLayoutPart" title="Link to this definition">#</a></dt>
+<dd><p>One run of values in a joint coordinate row.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>scope</strong> (<em>str</em>)</p></li>
+<li><p><strong>count</strong> (<em>int</em><em> | </em><em>str</em>)</p></li>
+</ul>
+</dd>
+</dl>
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ovnewton.attributes.JointLayoutPart.scope">
+<span class="sig-name descname"><span class="pre">scope</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">str</span></span><a class="headerlink" href="#ovnewton.attributes.JointLayoutPart.scope" title="Link to this definition">#</a></dt>
+<dd><p>The <code class="docutils literal notranslate"><span class="pre">UnitTerm</span></code> scope that gives the units of this run.</p>
+</dd></dl>
+
+<dl class="py attribute">
+<dt class="sig sig-object py" id="ovnewton.attributes.JointLayoutPart.count">
+<span class="sig-name descname"><span class="pre">count</span></span><span class="property"><span class="p"><span class="pre">:</span></span><span class="w"> </span><span class="pre">int</span><span class="w"> </span><span class="p"><span class="pre">|</span></span><span class="w"> </span><span class="pre">str</span></span><a class="headerlink" href="#ovnewton.attributes.JointLayoutPart.count" title="Link to this definition">#</a></dt>
+<dd><p>The number of values, or <code class="docutils literal notranslate"><span class="pre">&quot;configured&quot;</span></code> for the scalar axes that a D6 joint enables.</p>
+</dd></dl>
+
+</dd></dl>
+
+</section>
+<section id="errors">
+<h2>Errors<a class="headerlink" href="#errors" title="Link to this heading">#</a></h2>
+<dl class="py exception">
+<dt class="sig sig-object py" id="ovnewton.InvalidPhysicsError">
+<span class="property"><span class="k"><span class="pre">exception</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">ovnewton.</span></span><span class="sig-name descname"><span class="pre">InvalidPhysicsError</span></span><a class="headerlink" href="#ovnewton.InvalidPhysicsError" title="Link to this definition">#</a></dt>
+<dd><p>The populated stage contains malformed or contradictory physics data.</p>
+</dd></dl>
+
+<dl class="py exception">
+<dt class="sig sig-object py" id="ovnewton.UnsupportedPhysicsError">
+<span class="property"><span class="k"><span class="pre">exception</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">ovnewton.</span></span><span class="sig-name descname"><span class="pre">UnsupportedPhysicsError</span></span><a class="headerlink" href="#ovnewton.UnsupportedPhysicsError" title="Link to this definition">#</a></dt>
+<dd><p>The stage uses physics semantics that ovnewton does not implement.</p>
+<p>This is reserved for semantics whose loss would materially change physics
+and for which ovnewton has no exact representation or safe import policy.</p>
+</dd></dl>
+
+<dl class="py exception">
+<dt class="sig sig-object py" id="ovnewton.OvstageContractError">
+<span class="property"><span class="k"><span class="pre">exception</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">ovnewton.</span></span><span class="sig-name descname"><span class="pre">OvstageContractError</span></span><a class="headerlink" href="#ovnewton.OvstageContractError" title="Link to this definition">#</a></dt>
+<dd><p>Ovstage returned data that violates the transport contract ovnewton consumes.</p>
+</dd></dl>
+
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="support.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">Support</p>
+      </div>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+
+
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav id="pst-page-toc-nav" class="page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="pst-show_toc_level nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#package">Package</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.__version__"><code class="docutils literal notranslate"><span class="pre">__version__</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#attachment">Attachment</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.register_usd_schemas"><code class="docutils literal notranslate"><span class="pre">register_usd_schemas()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.population_desc"><code class="docutils literal notranslate"><span class="pre">population_desc()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.add_ovstage"><code class="docutils literal notranslate"><span class="pre">add_ovstage()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.OvstageImportResult"><code class="docutils literal notranslate"><span class="pre">OvstageImportResult</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.attach_ovstage"><code class="docutils literal notranslate"><span class="pre">attach_ovstage()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.StageBinding"><code class="docutils literal notranslate"><span class="pre">StageBinding</span></code></a><ul class="nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.StageBinding.model"><code class="docutils literal notranslate"><span class="pre">model</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.StageBinding.query"><code class="docutils literal notranslate"><span class="pre">query()</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.StageBinding.read"><code class="docutils literal notranslate"><span class="pre">read()</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.StageBinding.write"><code class="docutils literal notranslate"><span class="pre">write()</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.StageBinding.update_to_ovstage"><code class="docutils literal notranslate"><span class="pre">update_to_ovstage()</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.StageBinding.update_from_ovstage"><code class="docutils literal notranslate"><span class="pre">update_from_ovstage()</span></code></a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#output-reads">Output reads</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.SimObjectType"><code class="docutils literal notranslate"><span class="pre">SimObjectType</span></code></a><ul class="nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.SimObjectType.RIGID_BODY"><code class="docutils literal notranslate"><span class="pre">RIGID_BODY</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.SimObjectType.ARTICULATION_LINK"><code class="docutils literal notranslate"><span class="pre">ARTICULATION_LINK</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.SimObjectType.ARTICULATION_JOINT"><code class="docutils literal notranslate"><span class="pre">ARTICULATION_JOINT</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.SimObjectType.ARTICULATION"><code class="docutils literal notranslate"><span class="pre">ARTICULATION</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.SimObjectType.PHYSICS_SCENE"><code class="docutils literal notranslate"><span class="pre">PHYSICS_SCENE</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.ObjectScope"><code class="docutils literal notranslate"><span class="pre">ObjectScope</span></code></a><ul class="nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.ObjectScope.ALL"><code class="docutils literal notranslate"><span class="pre">ALL</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.ObjectScope.ACTIVE"><code class="docutils literal notranslate"><span class="pre">ACTIVE</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.Query"><code class="docutils literal notranslate"><span class="pre">Query</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.ReadResult"><code class="docutils literal notranslate"><span class="pre">ReadResult</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.ReadGroup"><code class="docutils literal notranslate"><span class="pre">ReadGroup</span></code></a><ul class="nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.ReadGroup.column_count"><code class="docutils literal notranslate"><span class="pre">column_count</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.ReadGroup.prim_index"><code class="docutils literal notranslate"><span class="pre">prim_index()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.ReadColumn"><code class="docutils literal notranslate"><span class="pre">ReadColumn</span></code></a><ul class="nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.ReadColumn.data_row_index"><code class="docutils literal notranslate"><span class="pre">data_row_index()</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.ReadColumn.tensor"><code class="docutils literal notranslate"><span class="pre">tensor()</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.ReadColumn.array"><code class="docutils literal notranslate"><span class="pre">array()</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.ReadColumn.dlpack"><code class="docutils literal notranslate"><span class="pre">dlpack()</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.ReadColumn.data_index_tensor"><code class="docutils literal notranslate"><span class="pre">data_index_tensor()</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.ReadColumn.data_index_array"><code class="docutils literal notranslate"><span class="pre">data_index_array()</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.ReadColumn.data_index_dlpack"><code class="docutils literal notranslate"><span class="pre">data_index_dlpack()</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.ReadColumnMeta"><code class="docutils literal notranslate"><span class="pre">ReadColumnMeta</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.ReadColumnCudaSync"><code class="docutils literal notranslate"><span class="pre">ReadColumnCudaSync</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.read_fields"><code class="docutils literal notranslate"><span class="pre">read_fields()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.ReadField"><code class="docutils literal notranslate"><span class="pre">ReadField</span></code></a><ul class="nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.ReadField.name"><code class="docutils literal notranslate"><span class="pre">name</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.ReadField.summary"><code class="docutils literal notranslate"><span class="pre">summary</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.ReadField.objects"><code class="docutils literal notranslate"><span class="pre">objects</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.ReadField.identity"><code class="docutils literal notranslate"><span class="pre">identity</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.ReadField.sources"><code class="docutils literal notranslate"><span class="pre">sources</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.ReadField.newton_fields"><code class="docutils literal notranslate"><span class="pre">newton_fields</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.ReadField.requires"><code class="docutils literal notranslate"><span class="pre">requires</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.ReadField.dtype"><code class="docutils literal notranslate"><span class="pre">dtype</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.ReadField.lanes"><code class="docutils literal notranslate"><span class="pre">lanes</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.ReadField.lanes_rule"><code class="docutils literal notranslate"><span class="pre">lanes_rule</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.ReadField.components"><code class="docutils literal notranslate"><span class="pre">components</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.ReadField.layout"><code class="docutils literal notranslate"><span class="pre">layout</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.ReadField.units"><code class="docutils literal notranslate"><span class="pre">units</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.ReadField.unit_terms"><code class="docutils literal notranslate"><span class="pre">unit_terms</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.ReadField.frame"><code class="docutils literal notranslate"><span class="pre">frame</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.ReadField.frame_tag"><code class="docutils literal notranslate"><span class="pre">frame_tag</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.ReadField.conversion"><code class="docutils literal notranslate"><span class="pre">conversion</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.ReadField.storage"><code class="docutils literal notranslate"><span class="pre">storage</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.ReadField.device"><code class="docutils literal notranslate"><span class="pre">device</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.ReadField.joint_layouts"><code class="docutils literal notranslate"><span class="pre">joint_layouts</span></code></a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#attribute-lookup">Attribute lookup</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.attributes.list_attributes"><code class="docutils literal notranslate"><span class="pre">list_attributes()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.attributes.get_attribute"><code class="docutils literal notranslate"><span class="pre">get_attribute()</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.attributes.UnitTerm"><code class="docutils literal notranslate"><span class="pre">UnitTerm</span></code></a><ul class="nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.attributes.UnitTerm.scope"><code class="docutils literal notranslate"><span class="pre">scope</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.attributes.UnitTerm.angle_unit"><code class="docutils literal notranslate"><span class="pre">angle_unit</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.attributes.JointLayout"><code class="docutils literal notranslate"><span class="pre">JointLayout</span></code></a><ul class="nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.attributes.JointLayout.representation"><code class="docutils literal notranslate"><span class="pre">representation</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.attributes.JointLayout.parts"><code class="docutils literal notranslate"><span class="pre">parts</span></code></a></li>
+</ul>
+</li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.attributes.JointLayoutPart"><code class="docutils literal notranslate"><span class="pre">JointLayoutPart</span></code></a><ul class="nav section-nav flex-column">
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.attributes.JointLayoutPart.scope"><code class="docutils literal notranslate"><span class="pre">scope</span></code></a></li>
+<li class="toc-h4 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.attributes.JointLayoutPart.count"><code class="docutils literal notranslate"><span class="pre">count</span></code></a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#errors">Errors</a><ul class="nav section-nav flex-column">
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.InvalidPhysicsError"><code class="docutils literal notranslate"><span class="pre">InvalidPhysicsError</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.UnsupportedPhysicsError"><code class="docutils literal notranslate"><span class="pre">UnsupportedPhysicsError</span></code></a></li>
+<li class="toc-h3 nav-item toc-entry"><a class="reference internal nav-link" href="#ovnewton.OvstageContractError"><code class="docutils literal notranslate"><span class="pre">OvstageContractError</span></code></a></li>
+</ul>
+</li>
+</ul>
+  </nav></div>
+
+</div></div>
+              
+            
+
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="_static/scripts/bootstrap.js?digest=90905a2f556bf617f1a9"></script>
+<script defer src="_static/scripts/pydata-sphinx-theme.js?digest=90905a2f556bf617f1a9"></script>
+
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+<a class="footer-brand logo" href="https://www.nvidia.com">
+  <img src="_static/nvidia-logo-horiz-rgb-1c-blk-for-screen.svg" class="logo__image only-light" alt="NVIDIA"/>
+  <img src="_static/nvidia-logo-horiz-rgb-1c-wht-for-screen.svg" class="logo__image only-dark" alt="NVIDIA"/>
+</a></div>
+      
+        <div class="footer-item">
+
+<div class="footer-links">
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/privacy-policy/">Privacy Policy</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/privacy-center/">Your Privacy Choices</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/terms-of-service/">Terms of Service</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/accessibility/">Accessibility</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/about-nvidia/company-policies/">Corporate Policies</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/product-security/">Product Security</a>
+   | 
+  
+  
+  
+  <a class="external" href="https://www.nvidia.com/en-us/contact/">Contact</a>
+  
+  
+  
+</div>
+</div>
+      
+        <div class="footer-item">
+
+
+
+
+  <p class="copyright">
+    
+      Copyright © 2026, NVIDIA CORPORATION &amp; AFFILIATES.
+      <br/>
+    
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+</div>
+
+  </footer>
+  </body>
+</html>

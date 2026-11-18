@@ -1,0 +1,26 @@
+[
+  {
+    "version": "0.3.0",
+    "name": "0.3.0 (stable)",
+    "url": "https://nvidia-omniverse.github.io/ovnewton/0.3.0/",
+    "preferred": true
+  },
+  {
+    "version": "0.2.1",
+    "name": "0.2.1",
+    "url": "https://nvidia-omniverse.github.io/ovnewton/0.2.1/",
+    "preferred": false
+  },
+  {
+    "version": "0.2.0",
+    "name": "0.2.0",
+    "url": "https://nvidia-omniverse.github.io/ovnewton/0.2.0/",
+    "preferred": false
+  },
+  {
+    "version": "0.1.1",
+    "name": "0.1.1",
+    "url": "https://nvidia-omniverse.github.io/ovnewton/0.1.1/",
+    "preferred": false
+  }
+]
